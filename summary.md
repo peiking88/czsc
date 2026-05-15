@@ -1,21 +1,15 @@
 # 工作摘要
 
-**时间:** 2026-05-15
+**时间:** 2026-05-15 09:14:37
 
-## 任务：适配 tdxdata 最新变更
+## 变更概要
+（无暂存变更）
 
-同步 `tdxdata` v0.8.2 中 `apply_adjust` 的三处修复到 `czsc.connectors.tdx_connector._apply_adjust`：
-
-1. **qfq 归一化** — 以最新因子为基准缩放，使 qfq 价格反映真实价值
-2. **datetime64 精度对齐** — 统一转为 `datetime64[us]`，兼容 pandas 3.x
-3. **空 merge 防护** — 防止空 DataFrame 导致 `iloc[-1]` 越界
-
-## 变更文件
-
-- `czsc/connectors/tdx_connector.py` — 新增：通达信数据源连接器
-- `czsc/__init__.py` — 版本号升至 0.10.13
-- `docs/tdx_connector_data_flow.md` — 新增：数据导入周期选择与复权处理逻辑文档
-
-## 测试
-
-`test/test_tdx_connector.py` 全部 49 个测试通过。
+## 最近提交
+```
+d892f91 fix: 同步 tdxdata apply_adjust 修复——qfq归一化、datetime64精度对齐、空merge防护
+2da6fde fix: 修复代码审查发现的 P0/P1/P2 级问题
+f8d0b76 Implement feature X to enhance user experience and optimize performance
+d4f0f77 refactor: 更新模块导入，调整依赖关系以清理代码
+4af275e refactor: 更新核心模块导入，删除不再使用的策略文件
+```

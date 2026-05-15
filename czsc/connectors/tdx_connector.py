@@ -34,16 +34,16 @@ FREQ_MAP = {
     "月线": "1d",
 }
 
-# 需要通过 resample_bars 重采样的周期
+# 需要通过 resample_kline 重采样的周期
 RESAMPLE_FREQS = {"15分钟", "30分钟", "60分钟", "周线", "月线"}
 
-# 重采样时的基础周期
-RESAMPLE_BASE = {
-    "15分钟": "5分钟",
-    "30分钟": "5分钟",
-    "60分钟": "5分钟",
-    "周线": "日线",
-    "月线": "日线",
+# czsc 周期 → tdxdata resample_kline 目标周期字符串
+RESAMPLE_TARGET = {
+    "15分钟": "15min",
+    "30分钟": "30min",
+    "60分钟": "1h",
+    "周线": "W",
+    "月线": "ME",
 }
 
 # 复权类型：czsc 中文 → tdxdata 英文
@@ -367,6 +367,24 @@ def _apply_adjust(df: pd.DataFrame, code: str, dividend_type: str, force_refresh
     return df
 
 
+def _resample_czsc(df: pd.DataFrame, target: str) -> pd.DataFrame:
+    """对 czsc 标准格式 DataFrame 进行 pandas 重采样
+
+    :param df: czsc 格式 DataFrame，含 dt, symbol, open, high, low, close, vol, amount
+    :param target: pandas 频率字符串，如 "15min" / "1h" / "W" / "ME"
+    :return: 重采样后的 DataFrame
+    """
+    if df.empty:
+        return df
+    df = df.set_index("dt")
+    agg_rules = {"open": "first", "high": "max", "low": "min", "close": "last", "vol": "sum", "amount": "sum"}
+    agg_rules = {k: v for k, v in agg_rules.items() if k in df.columns}
+    result = df.resample(target).agg(agg_rules)
+    result = result.dropna(subset=["open"]).reset_index()
+    result.loc[:, "symbol"] = result.get("symbol", df["symbol"].iloc[0] if "symbol" in df.columns else "")
+    return result
+
+
 def _to_czsc_columns(df: pd.DataFrame, original_symbol: str) -> pd.DataFrame:
     """将 tdxdata 风格 DataFrame 转换为 czsc 标准格式"""
     col_map = {"stock_code": "symbol", "date": "dt", "volume": "vol"}
@@ -445,11 +463,20 @@ def get_raw_bars(
     # 读取本地数据（传原始 symbol 以区分市场）
     df = _read_local(symbol, tdx_period, tdxdir)
     if df.empty:
-        return [] if raw_bar else pd.DataFrame(columns=CZSC_COLUMNS) if not raw_bar else []
+        return [] if raw_bar else pd.DataFrame(columns=CZSC_COLUMNS)
 
     # 应用复权
     if dividend_type != "none":
         df = _apply_adjust(df, code, dividend_type)
+
+    # 重采样（15分钟/30分钟/60分钟/周线/月线），在列转换前执行
+    if need_resample:
+        from tdxdata.sources.base import resample_kline
+
+        target = RESAMPLE_TARGET[freq_val]
+        df = resample_kline(df, target)
+        if df.empty:
+            return [] if raw_bar else pd.DataFrame(columns=CZSC_COLUMNS)
 
     # 转换为 czsc 标准格式
     df = _to_czsc_columns(df, symbol)
@@ -460,14 +487,9 @@ def get_raw_bars(
     if df.empty:
         return [] if raw_bar else df
 
-    # 重采样（15分钟/30分钟/60分钟/周线/月线）
-    if need_resample:
-        base_freq = RESAMPLE_BASE[freq_val]
-        result = czsc.resample_bars(df, target_freq=freq_val, raw_bars=raw_bar, base_freq=base_freq)
-    else:
-        result = czsc.format_standard_kline(df, freq_val) if raw_bar else df
-
-    return result
+    if raw_bar:
+        return czsc.format_standard_kline(df, freq_val)
+    return df
 
 
 def get_symbols(step: str = "check") -> list[str]:
@@ -588,14 +610,18 @@ def _sync_single_freq(
     if dividend_type != "none":
         df = _apply_adjust(df, code, dividend_type, force_refresh=force_full)
 
-    # 转换为 czsc 标准格式
-    df = _to_czsc_columns(df, symbol)
-
-    # 重采样（如果需要）
+    # 重采样（如果需要），在列转换前执行
     need_resample = freq_val in RESAMPLE_FREQS
     if need_resample:
-        base_freq = RESAMPLE_BASE[freq_val]
-        df = czsc.resample_bars(df, target_freq=freq_val, raw_bars=False, base_freq=base_freq)
+        from tdxdata.sources.base import resample_kline
+
+        target = RESAMPLE_TARGET[freq_val]
+        df = resample_kline(df, target)
+        if df.empty:
+            return cached if not cached.empty else pd.DataFrame(columns=CZSC_COLUMNS)
+
+    # 转换为 czsc 标准格式
+    df = _to_czsc_columns(df, symbol)
 
     # 增量合并
     if force_full or cached.empty:
@@ -654,7 +680,8 @@ def sync_bars(
         base_df = result["5分钟"]
         for target_freq in _RESAMPLE_FREQS_FROM_5M:
             try:
-                df = czsc.resample_bars(base_df, target_freq=target_freq, raw_bars=False, base_freq="5分钟")
+                target = RESAMPLE_TARGET[target_freq]
+                df = _resample_czsc(base_df, target)
                 _save_cache(df, symbol, target_freq)
                 result[target_freq] = df
                 logger.info(f"  {symbol} {target_freq}: 从5分钟重采样, {len(df)} 条")
@@ -666,7 +693,8 @@ def sync_bars(
         base_df = result["日线"]
         for target_freq in _RESAMPLE_FREQS_FROM_1D:
             try:
-                df = czsc.resample_bars(base_df, target_freq=target_freq, raw_bars=False, base_freq="日线")
+                target = RESAMPLE_TARGET[target_freq]
+                df = _resample_czsc(base_df, target)
                 _save_cache(df, symbol, target_freq)
                 result[target_freq] = df
                 logger.info(f"  {symbol} {target_freq}: 从日线重采样, {len(df)} 条")

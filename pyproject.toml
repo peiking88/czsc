@@ -38,7 +38,7 @@ dependencies = [
     # 核心数据处理
     "pandas>=1.0.0",
     "numpy",
-    "pyarrow",
+    "pyarrow>=24.0.0",
     "openpyxl",
     # 网络请求
     "requests>=2.24.0",
@@ -76,6 +76,8 @@ dependencies = [
     "pytz",
     "fonttools>=4.61.0",
     "polars>=0.20.0",
+    # 通达信数据源
+    "tdxdata",
 ]
 
 [[tool.uv.index]]
@@ -162,3 +164,10 @@ typeCheckingMode = "standard"
 pythonVersion = "3.10"
 exclude = ["examples/", "test_offline/", "docs/", "old/", "build/", "dist/", ".venv/"]
 reportMissingTypeStubs = false
+
+[tool.uv.sources]
+tdxdata = { path = "/home/li/peiking88/tdxdata" }
+
+[tool.uv]
+index-url = "https://mirrors.aliyun.com/pypi/simple/"
+extra-index-url = ["https://pypi.org/simple/"]

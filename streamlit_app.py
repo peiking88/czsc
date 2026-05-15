@@ -190,10 +190,27 @@ with st.sidebar:
     # TDX 数据目录信息
     st.caption(f"TDX 数据目录: `{DEFAULT_TDXDIR}`")
     try:
-        stock_count = len(scan_stocks(DEFAULT_TDXDIR))
-        st.caption(f"本地可用标的: {stock_count} 个")
+        stocks = scan_stocks(DEFAULT_TDXDIR)
+        sh = sum(1 for s in stocks if s.endswith(".SH"))
+        sz = sum(1 for s in stocks if s.endswith(".SZ"))
+        bj = sum(1 for s in stocks if s.endswith(".BJ"))
+        st.caption(f"本地数据: SH {sh} + SZ {sz} + BJ {bj} = {len(stocks)} 个")
     except Exception:
         st.caption("本地可用标的: 未扫描")
+    try:
+        from tdxdata.calendar import is_trading_day
+        from czsc.connectors.tdx_connector import _is_trading_time
+
+        today = date.today().strftime("%Y-%m-%d")
+        if is_trading_day(today):
+            if _is_trading_time():
+                st.caption(f"📡 {today} 盘中 · 实时数据可用")
+            else:
+                st.caption(f"📡 {today} 交易日(已收盘)")
+        else:
+            st.caption(f"📡 {today} 非交易日")
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════════════════
 # Tab 1: 数据导入

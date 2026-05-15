@@ -139,7 +139,6 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
     :return: DataFrame，列包含 stock_code, date, open, high, low, close, volume, amount
     """
     from mootdx.contrib.compat import MooTdxDailyBarReader
-    from tdxpy.reader import TdxLCMinBarReader, TdxMinBarReader
 
     if period not in PERIOD_METHOD:
         raise ValueError(f"本地不支持周期 '{period}'，支持: {sorted(PERIOD_METHOD)}")
@@ -153,9 +152,13 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
         filepath = os.path.join(tdxdir, "vipdoc", market, "lday", f"{market}{code}.day")
         reader = MooTdxDailyBarReader()
     elif method == "minute_5":
+        from opentdx.reader import TdxLCMinBarReader
+
         filepath = os.path.join(tdxdir, "vipdoc", market, "fzline", f"{market}{code}.lc5")
         reader = TdxLCMinBarReader()
     elif method == "minute_1":
+        from opentdx.reader import TdxMinBarReader
+
         filepath = os.path.join(tdxdir, "vipdoc", market, "minline", f"{market}{code}.lc1")
         reader = TdxMinBarReader()
     else:
@@ -196,170 +199,21 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
     return df[keep]
 
 
-# ---------------------------------------------------------------------------
-# 复权因子缓存
-# ---------------------------------------------------------------------------
-
-# 因子缓存新鲜度阈值（天）：超过此天数后重新拉取，检查是否有新的除权因子
-_ADJUST_FACTOR_MAX_AGE_DAYS = 1
-
-
-def _get_factor_cache_path(code: str, adjust_type: str) -> str:
-    """复权因子缓存路径"""
-    return os.path.join(CACHE_DIR, code, f"adjust_factor_{adjust_type}.parquet")
-
-
-def _load_factor_cache(code: str, adjust_type: str) -> pd.DataFrame:
-    """加载本地缓存的复权因子"""
-    path = _get_factor_cache_path(code, adjust_type)
-    if os.path.exists(path):
-        df = pd.read_parquet(path)
-        if not df.empty:
-            df = df.copy()
-            df.loc[:, "date"] = pd.to_datetime(df["date"])
-            df = df.set_index("date")
-            df = df.sort_index()
-            return df
-    return pd.DataFrame()
-
-
-def _save_factor_cache(factor_df: pd.DataFrame, code: str, adjust_type: str) -> None:
-    """持久化复权因子到缓存"""
-    d = os.path.join(CACHE_DIR, code)
-    os.makedirs(d, exist_ok=True)
-    path = _get_factor_cache_path(code, adjust_type)
-    save_df = factor_df.reset_index()
-    save_df.to_parquet(path, index=False)
-
-
-def _factor_cache_is_fresh(factor_df: pd.DataFrame) -> bool:
-    """因子缓存是否仍在新鲜期内"""
-    if factor_df.empty:
-        return False
-    last_date = factor_df.index.max()
-    if last_date is None or pd.isna(last_date):
-        return False
-    age = (pd.Timestamp.now() - pd.to_datetime(last_date)).days
-    return age <= _ADJUST_FACTOR_MAX_AGE_DAYS
-
-
-def _get_adjust_factors(code: str, adjust_type: str, force_refresh: bool = False) -> pd.DataFrame:
-    """获取复权因子，优先使用本地缓存，增量拉取新因子
-
-    首次导入：从新浪财经一次性拉取全量历史因子，存入本地缓存。
-    后续导入：缓存新鲜期内直接使用缓存；过期后增量拉取，合并新旧因子。
-
-    :param code: 纯数字标的代码
-    :param adjust_type: "qfq"/"hfq" 或 "front"/"back"，自动归一化为 tdxdata 格式
-    :param force_refresh: 强制重新拉取
-    :return: 因子 DataFrame，index 为日期，columns 为 factor
-    """
-    # 归一化：czsc 前端传入 front/back，tdxdata 内部使用 qfq/hfq
-    _ALIAS = {"front": "qfq", "back": "hfq"}
-    adjust_type = _ALIAS.get(adjust_type, adjust_type)
-
-    if not force_refresh:
-        cached = _load_factor_cache(code, adjust_type)
-        if not cached.empty and _factor_cache_is_fresh(cached):
-            return cached
-
-    # 拉取最新因子
-    try:
-        from mootdx.quotes import Quotes
-        from tdxdata.sources.adjust import fetch_factor
-
-        quotes_client = Quotes.factory(market="std")
-        new_factors = fetch_factor(code, adjust_type, quotes_client)
-    except Exception as e:
-        logger.warning(f"拉取 {code} {adjust_type} 复权因子失败: {e}")
-        cached = _load_factor_cache(code, adjust_type)
-        return cached if not cached.empty else pd.DataFrame()
-
-    if new_factors is None or new_factors.empty:
-        cached = _load_factor_cache(code, adjust_type)
-        return cached if not cached.empty else pd.DataFrame()
-
-    # 合并缓存与新因子（新因子覆盖旧日期的值）
-    cached = _load_factor_cache(code, adjust_type)
-    if not cached.empty:
-        merged = pd.concat([cached, new_factors])
-        merged = merged[~merged.index.duplicated(keep="last")]
-        merged = merged.sort_index()
-    else:
-        merged = new_factors
-
-    _save_factor_cache(merged, code, adjust_type)
-    return merged
-
-
 def _apply_adjust(df: pd.DataFrame, code: str, dividend_type: str, force_refresh: bool = False) -> pd.DataFrame:
-    """应用复权因子，支持日线和分钟数据
-
-    分钟数据的复权匹配以日期（不含时间）为基准，确保 hfq/qfq 方向均正确。
-    对齐 tdxdata.sources.adjust.apply_adjust 的复权逻辑。
-    """
+    """应用复权因子，委托给 tdxdata 内置的 apply_adjust"""
     if dividend_type == "none":
         return df
 
     try:
-        from tdxdata.sources.adjust import ADJUST_MAP
+        from mootdx.quotes import Quotes
+        from tdxdata.sources.adjust import ADJUST_MAP, apply_adjust
 
         adjust = ADJUST_MAP.get(dividend_type)
         if not adjust:
             return df
 
-        factor_df = _get_adjust_factors(code, adjust, force_refresh=force_refresh)
-        if factor_df is None or factor_df.empty:
-            return df
-
-        date_col = "date" if "date" in df.columns else "datetime"
-        if date_col not in df.columns:
-            return df
-
-        df = df.copy()
-        df.loc[:, date_col] = pd.to_datetime(df[date_col])
-        factor_df = factor_df.copy()
-        factor_df.index = pd.to_datetime(factor_df.index)
-        factor_df = factor_df.sort_index()
-
-        # pandas 3.x 下不同来源的 datetime64 精度可能不一致（[s] vs [us]），
-        # 统一转为 datetime64[us] 避免 merge_asof 报 incompatible merge keys
-        common_dtype = "datetime64[us]"
-        df[date_col] = df[date_col].astype(common_dtype)
-        factor_df.index = factor_df.index.astype(common_dtype)
-
-        # 分钟数据用 date-only（不含时间）做 merge_asof，避免时间分量导致
-        # hfq 方向匹配错位：例如 "2025-01-15 09:35:00" > "2025-01-15"，
-        # forward 会跳过当日因子匹配到下一个
-        df = df.sort_values(date_col).reset_index(drop=True)
-        df.loc[:, "_adj_date"] = df[date_col].dt.floor("D")
-        direction = "backward" if adjust == "qfq" else "forward"
-
-        merged = pd.merge_asof(
-            df,
-            factor_df[["factor"]],
-            left_on="_adj_date",
-            right_index=True,
-            direction=direction,
-        )
-
-        if "factor" not in merged.columns or merged.empty:
-            return df.drop(columns=["_adj_date"], errors="ignore")
-
-        merged.loc[:, "factor"] = merged["factor"].ffill().bfill().fillna(1.0)
-
-        # qfq 归一化：以最新因子为基准缩放，使当前价格反映真实价值
-        if adjust == "qfq":
-            latest_factor = factor_df["factor"].iloc[-1]
-            if latest_factor > 0:
-                merged["factor"] = merged["factor"] / latest_factor
-
-        for col in ["open", "high", "low", "close"]:
-            if col in merged.columns:
-                merged.loc[:, col] = merged[col] * merged["factor"]
-
-        merged = merged.drop(columns=["factor", "_adj_date"], errors="ignore")
-        return merged
+        quotes_client = Quotes.factory(market="std")
+        return apply_adjust(df, code, adjust, quotes_client=quotes_client)
 
     except Exception as e:
         logger.warning(f"复权因子获取失败，使用未复权数据: {e}")

@@ -33,7 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     # 核心数据处理
     "pandas>=1.0.0",
@@ -77,6 +77,8 @@ dependencies = [
     "fonttools>=4.61.0",
     "polars>=0.20.0",
     # 通达信数据源
+    "opentdx",
+    "mootdx",
     "tdxdata",
 ]
 
@@ -166,6 +168,8 @@ exclude = ["examples/", "test_offline/", "docs/", "old/", "build/", "dist/", ".v
 reportMissingTypeStubs = false
 
 [tool.uv.sources]
+opentdx = { path = "/home/li/peiking88/opentdx" }
+mootdx = { path = "/home/li/peiking88/mootdx" }
 tdxdata = { path = "/home/li/peiking88/tdxdata" }
 
 [tool.uv]

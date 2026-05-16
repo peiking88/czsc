@@ -104,3 +104,22 @@ pip install czsc -U -i https://pypi.python.org/simple
 
 * 链接：https://pan.baidu.com/s/1RXkP3188F0qu8Yk6CjbxRQ
 * 提取码：vhue
+
+### 2026-05-15 09:14:32
+```
+ czsc/__init__.py                 |   2 +-
+ czsc/connectors/tdx_connector.py | 711 +++++++++++++++++++++++++++++++++++++++
+ docs/tdx_connector_data_flow.md  | 348 +++++++++++++++++++
+ summary.md                       |  21 ++
+ 4 files changed, 1081 insertions(+), 1 deletion(-)
+```
+
+### 2026-05-15 10:28:39
+```
+ czsc/connectors/tdx_connector.py |  78 +++--
+ pyproject.toml                   |  11 +-
+ summary.md                       |  32 +-
+ test/test_envs.py                |  10 +-
+ test/test_tdx_connector.py       | 638 +++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 719 insertions(+), 50 deletions(-)
+```

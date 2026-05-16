@@ -112,17 +112,35 @@ class _SyncState:
 
 
 def _normalize_symbol(symbol: str) -> str:
-    """将 czsc 风格的标的代码转换为纯数字格式"""
-    for suffix in (".SH", ".SZ", ".BJ", ".XSHG", ".XSHE"):
-        symbol = symbol.replace(suffix, "")
+    """将 czsc 风格的标的代码转换为纯数字格式
+
+    支持格式：600519.SH / 600519.sh / SH600519 / sh.600519 / 600519 等
+    """
+    symbol = symbol.lower()
+    # 前缀：sh.600519 / sh600519 / sz.000858 / bj.899050
+    for market in ("sh", "sz", "bj"):
+        if symbol.startswith(market + "."):
+            return symbol[len(market) + 1 :]
+        if symbol.startswith(market):
+            return symbol[len(market) :]
+    # 后缀：600519.sh / 600519.sz / 600519.xshg
+    for suffix in (".sh", ".sz", ".bj", ".xshg", ".xshe"):
+        if symbol.endswith(suffix):
+            return symbol[: -len(suffix)]
     return symbol
 
 
 def _get_market(symbol: str) -> str:
     """从 czsc 风格标的代码中提取 TDX 市场代码"""
-    for suffix, market in ((".SH", "sh"), (".SZ", "sz"), (".BJ", "bj"),
-                           (".XSHG", "sh"), (".XSHE", "sz")):
-        if symbol.endswith(suffix):
+    symbol_lower = symbol.lower()
+    # 后缀：600519.sh / 000858.sz
+    for suffix, market in ((".sh", "sh"), (".sz", "sz"), (".bj", "bj"),
+                           (".xshg", "sh"), (".xshe", "sz")):
+        if symbol_lower.endswith(suffix):
+            return market
+    # 前缀：sh600519 / sz000858 / bj.899050（无点）
+    for prefix, market in (("sh", "sh"), ("sz", "sz"), ("bj", "bj")):
+        if symbol_lower.startswith(prefix) and not symbol_lower.startswith(prefix + "."):
             return market
     return "sh"
 

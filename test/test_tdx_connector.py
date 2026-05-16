@@ -71,14 +71,77 @@ class TestNormalizeSymbol:
     def test_pure_code(self):
         assert tc._normalize_symbol("000001") == "000001"
 
-    def test_sh_suffix(self):
+    def test_sh_suffix_upper(self):
         assert tc._normalize_symbol("600519.SH") == "600519"
 
-    def test_sz_suffix(self):
+    def test_sz_suffix_upper(self):
         assert tc._normalize_symbol("000858.SZ") == "000858"
 
-    def test_bj_suffix(self):
+    def test_bj_suffix_upper(self):
         assert tc._normalize_symbol("430047.BJ") == "430047"
+
+    def test_suffix_lower(self):
+        """小写后缀"""
+        assert tc._normalize_symbol("600519.sh") == "600519"
+        assert tc._normalize_symbol("000858.sz") == "000858"
+        assert tc._normalize_symbol("430047.bj") == "430047"
+
+    def test_prefix_with_dot(self):
+        """市场.代码 格式"""
+        assert tc._normalize_symbol("sh.600519") == "600519"
+        assert tc._normalize_symbol("sz.000858") == "000858"
+        assert tc._normalize_symbol("bj.899050") == "899050"
+
+    def test_prefix_upper_with_dot(self):
+        """大写的 市场.代码 格式"""
+        assert tc._normalize_symbol("SH.600519") == "600519"
+        assert tc._normalize_symbol("SZ.000858") == "000858"
+
+    def test_prefix_no_dot(self):
+        """无点前缀（TDX 文件名风格）"""
+        assert tc._normalize_symbol("sh600519") == "600519"
+        assert tc._normalize_symbol("sz000858") == "000858"
+        assert tc._normalize_symbol("bj899050") == "899050"
+
+    def test_old_exchange_suffix(self):
+        """旧式交易所后缀"""
+        assert tc._normalize_symbol("600519.XSHG") == "600519"
+        assert tc._normalize_symbol("000858.XSHE") == "000858"
+
+    def test_no_change_pure_numeric(self):
+        """纯数字代码不应被修改"""
+        assert tc._normalize_symbol("000001") == "000001"
+        assert tc._normalize_symbol("600519") == "600519"
+        assert tc._normalize_symbol("899050") == "899050"
+
+
+class TestGetMarket:
+    def test_sh_suffix(self):
+        assert tc._get_market("600519.SH") == "sh"
+        assert tc._get_market("600519.sh") == "sh"
+
+    def test_sz_suffix(self):
+        assert tc._get_market("000858.SZ") == "sz"
+        assert tc._get_market("000858.sz") == "sz"
+
+    def test_bj_suffix(self):
+        assert tc._get_market("430047.BJ") == "bj"
+        assert tc._get_market("430047.bj") == "bj"
+
+    def test_prefix_no_dot(self):
+        """无点前缀：sh600519 / sz000858"""
+        assert tc._get_market("sh600519") == "sh"
+        assert tc._get_market("sz000858") == "sz"
+        assert tc._get_market("bj899050") == "bj"
+
+    def test_default_sh(self):
+        """无法识别的代码默认返回上海"""
+        assert tc._get_market("600519") == "sh"
+        assert tc._get_market("000001") == "sh"
+
+    def test_old_exchange(self):
+        assert tc._get_market("600519.XSHG") == "sh"
+        assert tc._get_market("000858.XSHE") == "sz"
 
 
 # ---------------------------------------------------------------------------

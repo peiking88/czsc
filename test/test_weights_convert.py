@@ -267,8 +267,8 @@ def test_multiple_symbols():
 def test_empty_dataframe():
     """测试空 DataFrame"""
     df = pd.DataFrame(columns=["dt", "symbol", "weight"])
-    df["dt"] = pd.to_datetime(df["dt"], errors="coerce")
-    df["weight"] = df["weight"].astype(float)
+    df.loc[:, "dt"] = pd.to_datetime(df["dt"], errors="coerce")
+    df.loc[:, "weight"] = df["weight"].astype(float)
     result = weights_convert(df, rule="t+1")
     assert len(result) == 0
 

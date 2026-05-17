@@ -72,6 +72,34 @@ pip install git+https://github.com/waditu/czsc.git@V0.9.46 -U
 pip install czsc -U -i https://pypi.python.org/simple
 ```
 
+## Streamlit 分析前端
+
+基于 Streamlit 的交互式缠论分析工具，支持：
+
+- 通达信本地数据直接加载，自选股下拉选择
+- 多周期 K 线缠论分析（分型、笔自动识别）
+- K 线缠论可视化图表（Plotly 交互式图表）
+- 趋势质量评估：R² 拟合度、加速度、力度衰减、未完成笔
+- 复权前后价格对比
+
+```bash
+uv run streamlit run streamlit_app.py
+```
+
+## 一键预测脚本
+
+对指定股票批量生成多周期趋势质量评估报告（仅趋势评估，不含图表）：
+
+```bash
+# 单只或多只股票（空格分割）
+uv run python scripts/predict.py 600519.SH 000001.SZ 600000.SH
+```
+
+输出 `output/predict_<股票代码>.md`，包含 1d / 60m / 30m / 15m 四个周期的：
+- 多周期概览表（K线数、笔数、趋势方向、力度、R²、加速度）
+- 综合方向信号（偏多/偏空/均衡）
+- 每周期趋势质量评估（R² 拟合度、加速度、力度衰减、当前趋势、未完成笔）
+
 ## 使用案例
 
 1. [使用 tqsdk 进行期货交易](https://s0cqcxuy3p.feishu.cn/wiki/wikcn41lQIAJ1f8v41Dj5eAmrub)
@@ -122,4 +150,27 @@ pip install czsc -U -i https://pypi.python.org/simple
  test/test_envs.py                |  10 +-
  test/test_tdx_connector.py       | 638 +++++++++++++++++++++++++++++++++++++++
  5 files changed, 719 insertions(+), 50 deletions(-)
+```
+
+### 2026-05-16 18:06:16
+```
+ README.md                        |   19 +
+ czsc/__init__.py                 |    2 +-
+ czsc/connectors/tdx_connector.py |   30 +-
+ pyproject.toml                   |    6 +-
+ summary.md                       |   13 +-
+ test/test_tdx_connector.py       |   69 +-
+ test/test_weights_convert.py     |    4 +-
+ uv.lock                          | 1720 +++++++++-----------------------------
+ 8 files changed, 509 insertions(+), 1354 deletions(-)
+```
+
+### 2026-05-17
+```
+ README.md          |  24 ++
+ czsc/__init__.py   |   2 +-
+ scripts/predict.py | 180 +++++++++++
+ streamlit_app.py   |  78 +++--
+ summary.md         |  20 ++
+ 5 files changed
 ```

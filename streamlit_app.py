@@ -393,53 +393,56 @@ with tab_analysis:
                         render_table(df_bars, key="bars")
 
                 # ── 分型详情 ─────────────────────────────────────────────
-                st.subheader("🔺 分型列表")
-                st.caption("顶分型(G)：局部高点；底分型(D)：局部低点")
+                with st.expander("🔺 分型列表", expanded=False):
+                    st.caption("顶分型(G)：局部高点；底分型(D)：局部低点")
 
-                if czsc_obj.fx_list:
-                    fx_data = []
-                    for fx in czsc_obj.fx_list:
-                        fx_data.append({
-                            "日期": str(fx.dt)[:10],
-                            "分型": str(fx.mark),
-                            "分型值": round(fx.fx, 2),
-                        })
-                    df_fx = pd.DataFrame(fx_data[::-1])
-                    render_table(df_fx, key="fx")
-                else:
-                    st.info("当前数据范围内未检测到分型")
+                    if czsc_obj.fx_list:
+                        fx_data = []
+                        for fx in czsc_obj.fx_list:
+                            fx_data.append({
+                                "日期": str(fx.dt)[:10],
+                                "分型": str(fx.mark),
+                                "分型值": round(fx.fx, 2),
+                            })
+                        df_fx = pd.DataFrame(fx_data[::-1])
+                        render_table(df_fx, key="fx")
+                    else:
+                        st.info("当前数据范围内未检测到分型")
 
                 # ── 笔详情 ───────────────────────────────────────────────
-                st.subheader("📝 笔列表")
+                with st.expander("📝 笔列表", expanded=False):
 
+                    if czsc_obj.bi_list:
+                        bi_data = []
+                        for bi in czsc_obj.bi_list:
+                            bi_data.append({
+                                "方向": "↑ 向上" if bi.direction.value == "向上" else "↓ 向下",
+                                "起始日": str(bi.sdt)[:10],
+                                "结束日": str(bi.edt)[:10],
+                                "最高": round(bi.high, 2),
+                                "最低": round(bi.low, 2),
+                                "力度": round(bi.power, 2),
+                                "R²": round(bi.rsq, 3),
+                                "加速度": round(bi.acceleration, 1),
+                                "信噪比": round(bi.SNR, 2),
+                            })
+                        df_bi = pd.DataFrame(bi_data[::-1])
+
+                        up_count = sum(1 for b in czsc_obj.bi_list if b.direction.value == "向上")
+                        down_count = len(czsc_obj.bi_list) - up_count
+
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.metric("向上笔", up_count)
+                        with c2:
+                            st.metric("向下笔", down_count)
+
+                        render_table(df_bi, key="bi", compact=True)
+                    else:
+                        st.info("当前数据范围内未检测到笔")
+
+                # ── 趋势质量评估 ─────────────────────────────────────
                 if czsc_obj.bi_list:
-                    bi_data = []
-                    for bi in czsc_obj.bi_list:
-                        bi_data.append({
-                            "方向": "↑ 向上" if bi.direction.value == "向上" else "↓ 向下",
-                            "起始日": str(bi.sdt)[:10],
-                            "结束日": str(bi.edt)[:10],
-                            "最高": round(bi.high, 2),
-                            "最低": round(bi.low, 2),
-                            "力度": round(bi.power, 2),
-                            "R²": round(bi.rsq, 3),
-                            "加速度": round(bi.acceleration, 1),
-                            "信噪比": round(bi.SNR, 2),
-                        })
-                    df_bi = pd.DataFrame(bi_data[::-1])
-
-                    up_count = sum(1 for b in czsc_obj.bi_list if b.direction.value == "向上")
-                    down_count = len(czsc_obj.bi_list) - up_count
-
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.metric("向上笔", up_count)
-                    with c2:
-                        st.metric("向下笔", down_count)
-
-                    render_table(df_bi, key="bi", compact=True)
-
-                    # ── 趋势质量评估 ─────────────────────────────────────
                     st.subheader("📡 趋势质量评估")
                     bi_list = czsc_obj.bi_list
                     last_bi = bi_list[-1]
@@ -501,8 +504,6 @@ with tab_analysis:
                             f"起始 {str(ubi_bars[0].dt)[:10]} | "
                             f"最高 {ubi_high:.2f} | 最低 {ubi_low:.2f}"
                         )
-                else:
-                    st.info("当前数据范围内未检测到笔")
 
                 # ── Footer ───────────────────────────────────────────────
                 st.divider()

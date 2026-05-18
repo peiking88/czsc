@@ -126,6 +126,151 @@ def _overall_signal(results):
         return f"🟡 多空均衡 ({ups}↑ {downs}↓)"
 
 
+def _comprehensive_interpretation(results):
+    """对各周期缠论分析进行综合解读，返回 Markdown 文本"""
+    valid = {}
+    for label, _ in FREQS:
+        r = results.get(label)
+        if r and "error" not in r:
+            valid[label] = r
+
+    if not valid:
+        return ""
+
+    lines = []
+    lines.append("## 综合解读")
+    lines.append("")
+
+    # ── 1. 大级别定方向 ──
+    daily = valid.get("1d")
+    intraday_labels = [l for l, _ in FREQS if l != "1d" and l in valid]
+
+    if daily:
+        daily_dir = "向上" if "上升" in daily["direction"] else "向下"
+        daily_rsq = daily["last_bi"].rsq
+        daily_accel = daily["last_bi"].acceleration
+        daily_power = daily["last_bi"].power
+
+        if daily_rsq > 0.7:
+            trend_conf = "明确"
+        elif daily_rsq > 0.5:
+            trend_conf = "一般"
+        else:
+            trend_conf = "模糊"
+
+        lines.append(f"**日线级别：**当前为 **{daily_dir}** 趋势（R²={daily_rsq:.3f}, 力度={daily_power:.1f}），"
+                     f"趋势结构{trend_conf}。日线是主要方向基准，决定中长期持仓方向。")
+        lines.append("")
+
+        # ── 2. 多周期共振 ──
+        if intraday_labels:
+            same_count = 0
+            opp_count = 0
+            for label in intraday_labels:
+                r = valid[label]
+                if "上升" in r["direction"]:
+                    if daily_dir == "向上":
+                        same_count += 1
+                    else:
+                        opp_count += 1
+                else:
+                    if daily_dir == "向下":
+                        same_count += 1
+                    else:
+                        opp_count += 1
+
+            if same_count == len(intraday_labels):
+                lines.append("**多周期共振：**日线与 60m/30m/15m 方向完全一致，大小级别共振，"
+                             "趋势可靠性高。当前走势健康，可顺势操作。")
+            elif opp_count == len(intraday_labels):
+                lines.append("**⚠️ 多周期背离：**日线与所有小级别方向相反！这可能是趋势反转的前兆，"
+                             "也可能只是短期回调。建议降低仓位，等待方向确认后再入场。")
+            elif opp_count > same_count:
+                lines.append(f"**多周期分歧：**日线{ daily_dir }，但 {opp_count} 个小级别反向（仅 {same_count} 个同向），"
+                             "短周期与长周期存在明显分歧。建议观望或轻仓，等待共振信号出现。")
+            else:
+                lines.append(f"**多周期共振偏强：**日线{ daily_dir }，{same_count} 个小级别同向（{opp_count} 个反向），"
+                             "多数周期方向一致，共振效果较好。")
+            lines.append("")
+
+    # ── 3. 力度与加速度分析 ──
+    lines.append("### 力度与加速度分析")
+    lines.append("")
+    lines.append("| 周期 | 方向 | R² | 力度 | 加速度 | 评价 |")
+    lines.append("|------|------|-----|------|--------|------|")
+    for label, _ in FREQS:
+        r = valid.get(label)
+        if r:
+            bi = r["last_bi"]
+            _dir = "↑" if "上升" in r["direction"] else "↓"
+            _rsq = bi.rsq
+            _power = bi.power
+            _accel = bi.acceleration
+
+            if _rsq > 0.8:
+                _eval = "趋势明确"
+            elif _rsq > 0.6:
+                _eval = "趋势尚可"
+            else:
+                _eval = "趋势散乱"
+
+            if _accel > 10:
+                _eval += "，加速中"
+            elif _accel < -10:
+                _eval += "，反向加速"
+            elif _accel < 0:
+                _eval += "，减速中"
+            else:
+                _eval += "，匀速"
+
+            lines.append(f"| {label} | {_dir} | {_rsq:.3f} | {_power:.1f} | {_accel:.1f} | {_eval} |")
+        else:
+            lines.append(f"| {label} | - | - | - | - | 数据缺失 |")
+    lines.append("")
+
+    # ── 4. 关键观察与风险提示 ──
+    lines.append("### 关键观察与风险提示")
+    lines.append("")
+
+    warnings = []
+
+    # 检查力度衰减
+    powers = {}
+    for label, r in valid.items():
+        powers[label] = r["last_bi"].power
+
+    if "1d" in powers and "15m" in powers:
+        if powers["15m"] < powers["1d"] * 0.3:
+            warnings.append("- **动能衰竭信号：**15分钟级别力度仅为日线级别的 {:.0%}，小级别动能严重不足，"
+                            "可能无法推动大级别趋势延续".format(powers["15m"] / max(powers["1d"], 0.01)))
+
+    # 检查 R² 普遍偏低
+    low_rsq = [l for l, r in valid.items() if r["last_bi"].rsq < 0.5]
+    if len(low_rsq) >= 2:
+        warnings.append(f"- **趋势散乱：**{', '.join(low_rsq)} 周期 R² < 0.5，笔的几何结构不够规整，"
+                        f"当前处于震荡或方向不明确阶段，不宜追涨杀跌。")
+
+    # 检查未完成笔
+    ubi_labels = [l for l, r in valid.items() if r.get("ubi_info")]
+    if ubi_labels:
+        warnings.append(f"- **未完成笔：**{', '.join(ubi_labels)} 存在未完成笔，趋势可能正在转折中，"
+                        f"需密切关注该级别的最新K线演变。")
+
+    # 检查加速背离
+    if daily and daily["last_bi"].acceleration < -10:
+        warnings.append("- **⚠️ 日线反向加速：**日线级别出现反向加速，大趋势可能即将反转，"
+                        "建议减仓或设置止损。")
+
+    if not warnings:
+        lines.append("- 各周期趋势结构健康，未发现显著风险信号。")
+    else:
+        for w in warnings:
+            lines.append(w)
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_md(symbol, results, sdt, edt):
     """格式化单只股票为 Markdown 报告"""
     lines = []
@@ -169,6 +314,11 @@ def format_md(symbol, results, sdt, edt):
             err = r.get("error", "数据获取失败") if r else "未知错误"
             lines.append(f"⚠️ {err}")
         lines.append("")
+
+    # ── 综合解读 ──
+    interp = _comprehensive_interpretation(results)
+    if interp:
+        lines.append(interp)
 
     return "\n".join(lines)
 

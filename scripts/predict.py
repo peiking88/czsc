@@ -194,7 +194,7 @@ def main():
         results = predict_stock(symbol, sdt, edt)
         md = format_md(symbol, results, sdt, edt)
 
-        filename = f"output/predict_{symbol.replace('.', '_')}.md"
+        filename = f"output/czsc_{symbol.replace('.', '_')}.md"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(md)
         print(f"  → {filename}")

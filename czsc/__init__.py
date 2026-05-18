@@ -212,7 +212,7 @@ __all__ = [
     "welcome",
 ]
 
-__version__ = "0.10.17"
+__version__ = "0.11.0"
 __author__ = "zengbin93"
 __email__ = "zeng_bin8888@163.com"
 __date__ = "20260308"

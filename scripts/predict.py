@@ -173,6 +173,12 @@ def format_md(symbol, results, sdt, edt):
     return "\n".join(lines)
 
 
+def _merged_filename(symbols):
+    """多个股票时合并为一个文件名"""
+    parts = [s.replace(".", "_") for s in symbols]
+    return f"output/czsc_{'_'.join(parts)}.md"
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法: uv run python scripts/predict.py <股票代码1> [股票代码2] ...")
@@ -189,17 +195,49 @@ def main():
 
     os.makedirs("output", exist_ok=True)
 
+    all_results = {}
     for i, symbol in enumerate(symbols, 1):
         print(f"\n[{i}/{len(symbols)}] {symbol} ...")
-        results = predict_stock(symbol, sdt, edt)
-        md = format_md(symbol, results, sdt, edt)
+        all_results[symbol] = predict_stock(symbol, sdt, edt)
 
+    if len(symbols) == 1:
+        symbol = symbols[0]
+        md = format_md(symbol, all_results[symbol], sdt, edt)
         filename = f"output/czsc_{symbol.replace('.', '_')}.md"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(md)
         print(f"  → {filename}")
+    else:
+        lines = []
+        lines.append(f"# 缠论趋势预测报告（{len(symbols)}只股票）")
+        lines.append("")
+        lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
+        lines.append(f"> 股票: {', '.join(symbols)}")
+        lines.append("")
 
-    print(f"\n完成，共生成 {len(symbols)} 份报告 → output/")
+        # 汇总表
+        lines.append("## 综合概览")
+        lines.append("| 股票 | 综合信号 |")
+        lines.append("|------|----------|")
+        for symbol in symbols:
+            signal = _overall_signal(all_results[symbol])
+            lines.append(f"| {symbol} | {signal} |")
+        lines.append("")
+
+        for symbol in symbols:
+            lines.append("---")
+            lines.append("")
+            md = format_md(symbol, all_results[symbol], sdt, edt)
+            lines.append(md)
+            lines.append("")
+
+        merged = "\n".join(lines)
+        filename = _merged_filename(symbols)
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(merged)
+        print(f"\n  → {filename}")
+
+    print(f"\n完成，共生成 1 份报告 → output/")
 
 
 if __name__ == "__main__":

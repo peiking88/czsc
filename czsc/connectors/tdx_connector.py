@@ -309,11 +309,29 @@ def _is_trading_time() -> bool:
 
 
 def _append_realtime(df: pd.DataFrame, symbol: str, freq_val: str, fq: str) -> pd.DataFrame:
-    """盘中实时数据拼接（已复权），对缓存路径和非缓存路径统一调用"""
-    if not _is_trading_time():
-        return df
+    """实时数据拼接（已复权），对缓存路径和非缓存路径统一调用
+
+    策略：先检查 df 是否已包含当日数据（收盘后 TDX 本地文件会同步），
+    缺失时才通过网络补充。分钟线仅在交易时段补充（依赖 transaction()）。
+    """
     rt_params = RT_KLINE_PARAMS.get(freq_val)
     if not rt_params:
+        return df
+
+    # 检查是否已有当日数据（TDX 本地文件已同步则无需网络补充）
+    today = pd.Timestamp.now().normalize()
+    if "dt" in df.columns:
+        has_today = (pd.to_datetime(df["dt"]).dt.normalize() == today).any()
+    elif "date" in df.columns:
+        has_today = (pd.to_datetime(df["date"]).dt.normalize() == today).any()
+    else:
+        has_today = False
+    if has_today:
+        return df
+
+    rt_period = rt_params[0]
+    # 分钟线需要交易时段内有实时逐笔数据
+    if rt_period in ("1m", "5m") and not _is_trading_time():
         return df
     try:
         code = _normalize_symbol(symbol)

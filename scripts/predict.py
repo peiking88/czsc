@@ -328,11 +328,20 @@ def _comprehensive_interpretation(results):
     return "\n".join(lines)
 
 
-def format_md(symbol, results, sdt, edt, name=None):
+def format_md(symbol, results, sdt, edt, name=None, in_merged=False):
     """格式化单只股票为 Markdown 报告"""
     display = f"{name}（{symbol}）" if name else symbol
     lines = []
-    lines.append(f"# {display} 缠论趋势预测")
+
+    # 合并报告模式下：添加锚点和回到概览跳转链接
+    if in_merged:
+        anchor = symbol.replace(".", "-")
+        lines.append(f'<a id="stock-{anchor}"></a>')
+        lines.append(f"# {display} 缠论趋势预测")
+        lines.append("")
+        lines.append(f"[↑ 回到概览](#综合概览)")
+    else:
+        lines.append(f"# {display} 缠论趋势预测")
     lines.append("")
     lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
     lines.append(f"> 综合信号: {_overall_signal(results)}")
@@ -405,8 +414,26 @@ def _merged_filename(symbols):
     return f"output/czsc_{'_'.join(parts)}.md"
 
 
+def _sort_key(symbol, all_results, name_map):
+    """排序键：上证指数 > 创业板指 > 偏多 > 多空均衡 > 偏空 > 其他"""
+    name = (name_map or {}).get(symbol, "")
+    signal = _overall_signal(all_results[symbol])
+    if "上证指数" in name:
+        return 0
+    if "创业板指" in name:
+        return 1
+    if "偏多" in signal:
+        return 2
+    if "多空均衡" in signal:
+        return 3
+    if "偏空" in signal:
+        return 4
+    return 5
+
+
 def _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=None):
     """生成多股票合并报告"""
+    symbols = sorted(symbols, key=lambda s: _sort_key(s, all_results, name_map))
     lines = []
     lines.append(f"# 缠论趋势预测报告（{len(symbols)}只股票）")
     lines.append("")
@@ -420,6 +447,7 @@ def _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=None
     lines.append("")
 
     # 汇总表
+    lines.append('<a id="综合概览"></a>')
     lines.append("## 综合概览")
     lines.append("| 股票 | 综合信号 |")
     lines.append("|------|----------|")
@@ -427,14 +455,16 @@ def _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=None
         signal = _overall_signal(all_results[symbol])
         n = (name_map or {}).get(symbol)
         display = f"{n}（{symbol}）" if n else symbol
-        lines.append(f"| {display} | {signal} |")
+        anchor = symbol.replace(".", "-")
+        link = f"[{display}](#stock-{anchor})"
+        lines.append(f"| {link} | {signal} |")
     lines.append("")
 
     for symbol in symbols:
         lines.append("---")
         lines.append("")
         n = (name_map or {}).get(symbol)
-        md = format_md(symbol, all_results[symbol], sdt, edt, name=n)
+        md = format_md(symbol, all_results[symbol], sdt, edt, name=n, in_merged=True)
         lines.append(md)
         lines.append("")
 

@@ -144,7 +144,7 @@ def predict_stock(symbol, sdt, edt, fq="前复权", logger=None):
     results = {}
     for label, freq in FREQS:
         try:
-            bars = get_raw_bars(symbol, freq.value, sdt, edt, fq=fq)
+            bars = get_raw_bars(symbol, freq.value, sdt, edt, fq=fq, realtime=True)
             if not bars:
                 results[label] = {"error": "无数据"}
                 continue

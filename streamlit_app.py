@@ -227,7 +227,7 @@ with tab_import:
         st.subheader("📋 原始数据（不复权）")
         with st.spinner("读取原始数据..."):
             try:
-                raw_df = get_raw_bars(symbol, freq, str(sdt), str(edt), fq="不复权", raw_bar=False)
+                raw_df = get_raw_bars(symbol, freq, str(sdt), str(edt), fq="不复权", raw_bar=False, realtime=True)
             except Exception as e:
                 st.error(f"读取失败: {e}")
                 raw_df = pd.DataFrame()
@@ -281,7 +281,7 @@ with tab_import:
                 st.subheader(f"📊 复权后数据（{fq}）")
                 with st.spinner("应用复权..."):
                     try:
-                        adj_df = get_raw_bars(symbol, freq, str(sdt), str(edt), fq=fq, raw_bar=False)
+                        adj_df = get_raw_bars(symbol, freq, str(sdt), str(edt), fq=fq, raw_bar=False, realtime=True)
                     except Exception as e:
                         st.error(f"复权数据获取失败: {e}")
                         adj_df = pd.DataFrame()
@@ -328,7 +328,7 @@ with tab_analysis:
         # Fetch data
         with st.spinner(f"正在获取 {symbol} {freq} 数据 ({fq})..."):
             try:
-                bars = get_raw_bars(symbol, freq, str(sdt), str(edt), fq=fq)
+                bars = get_raw_bars(symbol, freq, str(sdt), str(edt), fq=fq, realtime=True)
             except Exception as e:
                 st.error(f"数据获取失败: {e}")
                 bars = []

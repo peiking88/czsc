@@ -303,40 +303,117 @@ def _is_trading_time() -> bool:
     return (time(9, 30) <= t <= time(11, 30)) or (time(13, 0) <= t <= time(15, 0))
 
 
+def _append_realtime(df: pd.DataFrame, symbol: str, freq_val: str, fq: str) -> pd.DataFrame:
+    """盘中实时数据拼接（已复权），对缓存路径和非缓存路径统一调用"""
+    if not _is_trading_time():
+        return df
+    rt_params = RT_KLINE_PARAMS.get(freq_val)
+    if not rt_params:
+        return df
+    try:
+        code = _normalize_symbol(symbol)
+        dividend_type = FQ_MAP.get(fq, "none")
+        rt_period, rt_count = rt_params
+        raw_rt = _fetch_realtime_kline(code, rt_period, rt_count, dividend_type)
+        if not raw_rt.empty:
+            rt_df = _to_czsc_columns(raw_rt, symbol)
+            if not rt_df.empty:
+                df = pd.concat([df, rt_df], ignore_index=True)
+                df = df.drop_duplicates(subset=["dt"], keep="last")
+                df = df.sort_values("dt").reset_index(drop=True)
+    except Exception as e:
+        logger.warning(f"盘中实时数据获取失败: {e}")
+    return df
+
+
 def _fetch_realtime_kline(code: str, period: str, count: int, dividend_type: str) -> pd.DataFrame:
     """获取盘中实时K线（仅当日数据），返回 tdxdata 标准格式（已复权）
 
-    通过 tdxdata.fetch_kline() 获取完整 OHLCV K线，然后应用复权因子。
+    日线及以上：通过 tdxdata.fetch_kline() → mootdx bars() 获取。
+    分钟线：bars() 对分钟频率解析失败，fallback 用 transaction() 逐笔数据聚合 OHLCV。
 
     :param code: 纯数字股票代码，如 "600519"
-    :param period: fetch_kline 周期，如 "1m"/"5m"/"15m"/"1d"
+    :param period: 周期，如 "1m"/"5m"/"15m"/"30m"/"1h"/"1d"
     :param count: 获取K线数量
     :param dividend_type: 复权类型，"front"/"back"/"none"
     """
-    from tdxdata.api import TdxData
-
-    tdx = TdxData()
-    df = tdx.fetch_kline(stock_code=code, period=period, count=count)
-    tdx.close()
-
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # 只保留当日数据
     today = pd.Timestamp.now().normalize()
-    if "date" in df.columns:
+
+    if period in ("1d", "1w", "1mon"):
+        # 日线及以上：使用 bars()（已验证可用）
+        from tdxdata.api import TdxData
+        tdx = TdxData()
+        df = tdx.fetch_kline(stock_code=code, period=period, count=count)
+        tdx.close()
+        if df is None or df.empty:
+            return pd.DataFrame()
         df = df.copy()
-        df["date"] = pd.to_datetime(df["date"])
+        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
         df = df[df["date"] >= today]
+    else:
+        # 分钟线：bars() 不可用，从 transaction() 逐笔数据聚合
+        df = _build_kline_from_ticks(code, period, today)
 
     if df.empty:
         return pd.DataFrame()
 
-    # 应用复权
     if dividend_type != "none":
         df = _apply_adjust(df, code, dividend_type)
 
     return df
+
+
+def _build_kline_from_ticks(code: str, period: str, today: pd.Timestamp) -> pd.DataFrame:
+    """用 mootdx transaction() 逐笔数据聚合成分钟K线
+
+    时间标签使用 A 股交易时段感知的结束时间（与历史数据一致）：
+    - 30分钟: 10:00, 10:30, 11:00, 11:30, 13:30, 14:00, 14:30, 15:00
+    - 60分钟: 10:30, 11:30, 14:00, 15:00
+    集合竞价（09:25-09:29）归入上午第一根K线。
+
+    :param code: 纯数字股票代码
+    :param period: "1m"/"5m"/"15m"/"30m"/"1h"
+    :param today: 当日 00:00 Timestamp
+    :return: DataFrame with columns [date, open, close, high, low, volume, amount, stock_code]
+    """
+    from mootdx.quotes import Quotes
+    from tdxdata.sources.base import bar_end_time_ashare
+
+    period_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+    minutes = period_minutes.get(period)
+    if minutes is None:
+        return pd.DataFrame()
+
+    client = Quotes.factory(market="std")
+    ticks = client.transaction(symbol=code, start=0, offset=4000)
+    if ticks is None or ticks.empty:
+        return pd.DataFrame()
+
+    # 构造完整 datetime：当日日期 + HH:MM
+    ticks = ticks.copy()
+    ticks["date"] = ticks["time"].apply(
+        lambda t: pd.Timestamp(f"{today.strftime('%Y-%m-%d')} {t}:00")
+    )
+
+    # 按 price*volume 估算成交额
+    ticks["amount"] = ticks["price"] * ticks["volume"]
+
+    # 用 A 股交易时段感知函数计算周期结束时间标签
+    # 集合竞价（09:25-09:29）归入上午第一根K线，与历史数据一致
+    ticks["bucket"] = ticks["date"].apply(lambda dt: bar_end_time_ashare(dt, minutes))
+
+    agg = ticks.groupby("bucket", sort=True).agg(
+        open=("price", "first"),
+        close=("price", "last"),
+        high=("price", "max"),
+        low=("price", "min"),
+        volume=("volume", "sum"),
+        amount=("amount", "sum"),
+    ).reset_index()
+    agg.rename(columns={"bucket": "date"}, inplace=True)
+    agg["stock_code"] = code
+
+    return agg.reset_index(drop=True)
 
 
 def get_raw_bars(
@@ -381,6 +458,9 @@ def get_raw_bars(
             cached_in_range = cached[(cached["dt"] >= sdt_ts) & (cached["dt"] <= edt_ts)]
             if not cached_in_range.empty:
                 result = cached_in_range.reset_index(drop=True)
+                # 盘中实时数据补充
+                if kwargs.get("realtime"):
+                    result = _append_realtime(result, symbol, freq_val, fq)
                 if raw_bar:
                     return czsc.format_standard_kline(result, freq_val)
                 return result
@@ -420,20 +500,8 @@ def get_raw_bars(
     df = _to_czsc_columns(df, symbol)
 
     # ── 盘中实时数据补充（已复权）─────────────────────────────────────
-    if kwargs.get("realtime") and _is_trading_time():
-        try:
-            rt_params = RT_KLINE_PARAMS.get(freq_val)
-            if rt_params:
-                rt_period, rt_count = rt_params
-                raw_rt = _fetch_realtime_kline(code, rt_period, rt_count, dividend_type)
-                if not raw_rt.empty:
-                    rt_df = _to_czsc_columns(raw_rt, symbol)
-                    if not rt_df.empty:
-                        df = pd.concat([df, rt_df], ignore_index=True)
-                        df = df.drop_duplicates(subset=["dt"], keep="last")
-                        df = df.sort_values("dt").reset_index(drop=True)
-        except Exception as e:
-            logger.warning(f"盘中实时数据获取失败: {e}")
+    if kwargs.get("realtime"):
+        df = _append_realtime(df, symbol, freq_val, fq)
 
     # 过滤到用户请求的日期范围
     df = df[(df["dt"] >= sdt_ts) & (df["dt"] <= edt_ts)].reset_index(drop=True)

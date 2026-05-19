@@ -187,10 +187,10 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
         filepath = os.path.join(tdxdir, "vipdoc", market, "fzline", f"{market}{code}.lc5")
         reader = TdxLCMinBarReader()
     elif method == "minute_1":
-        from opentdx.reader import TdxMinBarReader
+        from opentdx.reader import TdxLCMinBarReader
 
         filepath = os.path.join(tdxdir, "vipdoc", market, "minline", f"{market}{code}.lc1")
-        reader = TdxMinBarReader()
+        reader = TdxLCMinBarReader()
     else:
         return pd.DataFrame()
 
@@ -218,7 +218,12 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
     if "vol" in df.columns and "volume" not in df.columns:
         df = df.rename(columns={"vol": "volume"})
 
-    # 成交量规范化为整数（TDX .day 文件以 float 存储，含浮点误差）
+    # 成交量单位统一为"股"
+    # mootdx 日线 reader 对 .day 原始 volume × 0.01 变成了"手"，需 × 100 恢复
+    # .lc1/.lc5 reader 直接输出原始值，单位已是"股"
+    if method == "daily" and "volume" in df.columns:
+        df.loc[:, "volume"] = df["volume"] * 100
+
     if "volume" in df.columns:
         df.loc[:, "volume"] = df["volume"].round(0).astype("int64")
 
@@ -349,6 +354,9 @@ def _fetch_realtime_kline(code: str, period: str, count: int, dividend_type: str
             return pd.DataFrame()
         df = df.copy()
         df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        # bars() 日线 volume 单位是手，转为股
+        if "volume" in df.columns:
+            df["volume"] = df["volume"] * 100
         df = df[df["date"] >= today]
     else:
         # 分钟线：bars() 不可用，从 transaction() 逐笔数据聚合
@@ -395,7 +403,8 @@ def _build_kline_from_ticks(code: str, period: str, today: pd.Timestamp) -> pd.D
         lambda t: pd.Timestamp(f"{today.strftime('%Y-%m-%d')} {t}:00")
     )
 
-    # 按 price*volume 估算成交额
+    # transaction() 的 volume 单位是手（100股），转换为股以匹配历史数据
+    ticks["volume"] = ticks["volume"] * 100
     ticks["amount"] = ticks["price"] * ticks["volume"]
 
     # 用 A 股交易时段感知函数计算周期结束时间标签

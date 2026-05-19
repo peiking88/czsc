@@ -1,16 +1,29 @@
 #!/usr/bin/env python
 """一键预测脚本：为每只股票生成缠论趋势质量评估报告（1d/60m/30m/15m）
 
-用法: uv run python scripts/predict.py 600519.SH 000001.SZ
+用法:
+  uv run python scripts/predict.py                  # 从TDX自选股读取
+  uv run python scripts/predict.py 600519.SH 000001.SZ  # 手动指定
+  uv run python scripts/predict.py -n 4 600519.SH 000001.SZ  # 指定并发数
 
-输出: output/predict_<symbol>.md，每个文件包含 4 个周期的趋势质量评估。
+输出:
+  自选股模式 → output/czsc_zxg_yyyymmdd.md
+  手动模式   → output/czsc_<symbol>.md
 """
 
+import argparse
+import logging
 import os
 import sys
+import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import redirect_stderr
 from datetime import date, timedelta
+from pathlib import Path
 
-from czsc.connectors.tdx_connector import get_raw_bars
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars
 from czsc.core import CZSC, Freq
 
 FREQS = [
@@ -19,6 +32,48 @@ FREQS = [
     ("30m", Freq.F30),
     ("15m", Freq.F15),
 ]
+
+
+def _setup_logging(log_file: str) -> logging.Logger:
+    """配置日志：文件记录详细信息，屏幕只显示进度"""
+    # 抑制 loguru 输出到屏幕
+    try:
+        from loguru import logger as loguru_logger
+        loguru_logger.remove()
+        loguru_logger.add(log_file, level="WARNING", encoding="utf-8")
+    except ImportError:
+        pass
+
+    logger = logging.getLogger("predict")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    fh = logging.FileHandler(log_file, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(fh)
+
+    return logger
+
+
+def _batch_stock_names(symbols: list[str], devnull) -> dict[str, str]:
+    """批量获取股票名称，返回 {symbol: name} 字典"""
+    from tdxdata.api import TdxData
+
+    name_map = {}
+    with redirect_stderr(devnull):
+        tdx = TdxData()
+        try:
+            for symbol in symbols:
+                code = _normalize_symbol(symbol)
+                try:
+                    name = tdx.get_stock_name(code)
+                    name_map[symbol] = name or code
+                except Exception:
+                    name_map[symbol] = code
+        finally:
+            tdx.close()
+    return name_map
 
 
 def assess_trend(czsc_obj):
@@ -84,7 +139,7 @@ def assess_trend(czsc_obj):
     }
 
 
-def predict_stock(symbol, sdt, edt, fq="前复权"):
+def predict_stock(symbol, sdt, edt, fq="前复权", logger=None):
     """对单只股票生成多周期预测结果"""
     results = {}
     for label, freq in FREQS:
@@ -100,6 +155,8 @@ def predict_stock(symbol, sdt, edt, fq="前复权"):
             else:
                 results[label] = trend
         except Exception as e:
+            if logger:
+                logger.error(f"{symbol} {label} 分析失败: {e}")
             results[label] = {"error": str(e)}
     return results
 
@@ -271,10 +328,11 @@ def _comprehensive_interpretation(results):
     return "\n".join(lines)
 
 
-def format_md(symbol, results, sdt, edt):
+def format_md(symbol, results, sdt, edt, name=None):
     """格式化单只股票为 Markdown 报告"""
+    display = f"{name}（{symbol}）" if name else symbol
     lines = []
-    lines.append(f"# {symbol} 缠论趋势预测")
+    lines.append(f"# {display} 缠论趋势预测")
     lines.append("")
     lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
     lines.append(f"> 综合信号: {_overall_signal(results)}")
@@ -323,71 +381,155 @@ def format_md(symbol, results, sdt, edt):
     return "\n".join(lines)
 
 
+TDX_ZXG_PATH = Path("/home/li/.local/share/tdxcfv/drive_c/tc/T0002/blocknew/zxg.blk")
+
+
+def _parse_tdx_zxg(path):
+    """解析通达信自选股文件，返回 symbol 列表（如 600519.SH）
+
+    文件格式：每行一个7位编码，首字符为市场码（1=上海, 0=深圳），后6位为股票代码。
+    """
+    market_map = {"1": "SH", "0": "SZ"}
+    symbols = []
+    with open(path, encoding="gbk", errors="ignore") as f:
+        for line in f:
+            code = line.strip()
+            if len(code) == 7 and code[0] in market_map:
+                symbols.append(f"{code[1:]}.{market_map[code[0]]}")
+    return symbols
+
+
 def _merged_filename(symbols):
     """多个股票时合并为一个文件名"""
     parts = [s.replace(".", "_") for s in symbols]
     return f"output/czsc_{'_'.join(parts)}.md"
 
 
+def _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=None):
+    """生成多股票合并报告"""
+    lines = []
+    lines.append(f"# 缠论趋势预测报告（{len(symbols)}只股票）")
+    lines.append("")
+    lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
+
+    stock_labels = []
+    for s in symbols:
+        n = (name_map or {}).get(s)
+        stock_labels.append(f"{n}（{s}）" if n else s)
+    lines.append(f"> 股票: {', '.join(stock_labels)}")
+    lines.append("")
+
+    # 汇总表
+    lines.append("## 综合概览")
+    lines.append("| 股票 | 综合信号 |")
+    lines.append("|------|----------|")
+    for symbol in symbols:
+        signal = _overall_signal(all_results[symbol])
+        n = (name_map or {}).get(symbol)
+        display = f"{n}（{symbol}）" if n else symbol
+        lines.append(f"| {display} | {signal} |")
+    lines.append("")
+
+    for symbol in symbols:
+        lines.append("---")
+        lines.append("")
+        n = (name_map or {}).get(symbol)
+        md = format_md(symbol, all_results[symbol], sdt, edt, name=n)
+        lines.append(md)
+        lines.append("")
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("用法: uv run python scripts/predict.py <股票代码1> [股票代码2] ...")
-        print("示例: uv run python scripts/predict.py 600519.SH 000001.SZ 600000.SH")
+    parser = argparse.ArgumentParser(description="缠论趋势预测")
+    parser.add_argument("symbols", nargs="*", help="股票代码，如 600519.SH 000001.SZ")
+    parser.add_argument("-n", "--workers", type=int, default=4, help="并行线程数（默认 4）")
+    args = parser.parse_args()
+
+    # 解析股票列表：命令行参数优先，否则读取TDX自选股
+    if args.symbols:
+        symbols = args.symbols
+        from_zxg = False
+    elif TDX_ZXG_PATH.exists():
+        symbols = _parse_tdx_zxg(TDX_ZXG_PATH)
+        if not symbols:
+            print(f"TDX自选股文件为空: {TDX_ZXG_PATH}")
+            sys.exit(1)
+        from_zxg = True
+    else:
+        print("用法: uv run python scripts/predict.py [股票代码1] [股票代码2] ...")
+        print("  无参数时自动读取TDX自选股")
+        print("  示例: uv run python scripts/predict.py 600519.SH 000001.SZ")
+        print("  并发: uv run python scripts/predict.py -n 4 600519.SH 000001.SZ")
         sys.exit(1)
 
-    symbols = sys.argv[1:]
     edt = date.today().strftime("%Y-%m-%d")
     sdt = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
 
+    os.makedirs("output", exist_ok=True)
+    log_file = f"output/predict_{edt.replace('-', '')}.log"
+    logger = _setup_logging(log_file)
+
     print(f"数据范围: {sdt} ~ {edt}")
     print(f"待预测({len(symbols)}): {', '.join(symbols)}")
+    print(f"并发数: {args.workers}")
     print("=" * 60)
 
-    os.makedirs("output", exist_ok=True)
+    # 批量获取股票名称
+    print("获取股票名称...")
+    devnull = open(os.devnull, "w")
+    name_map = _batch_stock_names(symbols, devnull)
+    for s in symbols:
+        logger.info(f"{s} → {name_map.get(s, s)}")
 
+    # 并行分析
     all_results = {}
-    for i, symbol in enumerate(symbols, 1):
-        print(f"\n[{i}/{len(symbols)}] {symbol} ...")
-        all_results[symbol] = predict_stock(symbol, sdt, edt)
+    total = len(symbols)
 
-    if len(symbols) == 1:
+    if total == 1:
         symbol = symbols[0]
-        md = format_md(symbol, all_results[symbol], sdt, edt)
-        filename = f"output/czsc_{symbol.replace('.', '_')}.md"
+        print(f"\n[1/1] {name_map.get(symbol, symbol)} ...")
+        all_results[symbol] = predict_stock(symbol, sdt, edt, logger=logger)
+    else:
+        workers = min(args.workers, total)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(predict_stock, symbol, sdt, edt, "前复权", logger): symbol
+                for symbol in symbols
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                symbol = futures[future]
+                done_count += 1
+                try:
+                    all_results[symbol] = future.result()
+                except Exception as e:
+                    logger.error(f"{symbol} 分析异常: {e}")
+                    all_results[symbol] = {label: {"error": str(e)} for label, _ in FREQS}
+                display = name_map.get(symbol, symbol)
+                print(f"  [{done_count}/{total}] {display} 完成")
+
+    # 确定输出文件名
+    if from_zxg:
+        filename = f"output/czsc_zxg_{edt.replace('-', '')}.md"
+    elif len(symbols) == 1:
+        filename = f"output/czsc_{symbols[0].replace('.', '_')}.md"
+    else:
+        filename = _merged_filename(symbols)
+
+    # 生成报告
+    if len(symbols) == 1 and not from_zxg:
+        md = format_md(symbols[0], all_results[symbols[0]], sdt, edt, name=name_map.get(symbols[0]))
         with open(filename, "w", encoding="utf-8") as f:
             f.write(md)
-        print(f"  → {filename}")
     else:
-        lines = []
-        lines.append(f"# 缠论趋势预测报告（{len(symbols)}只股票）")
-        lines.append("")
-        lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
-        lines.append(f"> 股票: {', '.join(symbols)}")
-        lines.append("")
+        _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=name_map)
 
-        # 汇总表
-        lines.append("## 综合概览")
-        lines.append("| 股票 | 综合信号 |")
-        lines.append("|------|----------|")
-        for symbol in symbols:
-            signal = _overall_signal(all_results[symbol])
-            lines.append(f"| {symbol} | {signal} |")
-        lines.append("")
-
-        for symbol in symbols:
-            lines.append("---")
-            lines.append("")
-            md = format_md(symbol, all_results[symbol], sdt, edt)
-            lines.append(md)
-            lines.append("")
-
-        merged = "\n".join(lines)
-        filename = _merged_filename(symbols)
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(merged)
-        print(f"\n  → {filename}")
-
-    print(f"\n完成，共生成 1 份报告 → output/")
+    print(f"\n  → {filename}")
+    print(f"  → {log_file}")
+    print(f"完成，共生成 1 份报告 → output/")
 
 
 if __name__ == "__main__":

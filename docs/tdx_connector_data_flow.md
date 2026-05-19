@@ -72,11 +72,13 @@ czsc 周期       →  tdxdata 本地读取周期
 |------|------|---------|--------|
 | 1d | daily | `vipdoc/{market}/lday/{market}{code}.day` | MooTdxDailyBarReader |
 | 5m | minute_5 | `vipdoc/{market}/fzline/{market}{code}.lc5` | TdxLCMinBarReader |
-| 1m | minute_1 | `vipdoc/{market}/minline/{market}{code}.lc1` | TdxMinBarReader |
+| 1m | minute_1 | `vipdoc/{market}/minline/{market}{code}.lc1` | TdxLCMinBarReader |
 
 归一化处理：
 - 日期索引重置为列、统一列名 `date`
-- `volume` 列名统一、四舍五入为整数（TDX .day 文件以 float 存储含浮点误差）
+- `volume` 列名统一
+- 日线 `volume × 100`：mootdx `MooTdxDailyBarReader` 对 `.day` 原始 volume 乘了 `coefficient[1]=0.01`（设计上仅 OHLC 需要系数转换，volume 不应转换），输出单位从"股"变成了"手"，需乘回
+- `volume` 四舍五入为整数
 
 ### 2.4 重采样实现 `czsc.resample_bars`
 
@@ -346,3 +348,54 @@ _FREQ_FILENAME = {
     "日线": "1d", "周线": "1w", "月线": "1M",
 }
 ```
+
+---
+
+## 七、数据单位规范
+
+所有通过 `get_raw_bars` / `sync_bars` / `sync_all` 返回的数据，单位统一如下：
+
+| 字段 | 单位 | 说明 |
+|------|------|------|
+| open / high / low / close | 元 | 所有周期一致 |
+| volume | **股** | 所有周期一致 |
+| amount | 元 | 所有周期一致 |
+
+### 各数据源原始单位与转换
+
+| 数据源 | OHLC | volume 原始单位 | volume 转换 |
+|--------|------|----------------|-------------|
+| `.lc1` 本地1分钟 | 元 (float) | 股 | 无需转换 |
+| `.lc5` 本地5分钟 | 元 (float) | 股 | 无需转换 |
+| `.day` 本地日线 | 分 (int)，mootdx × coef → 元 | 股，mootdx × 0.01 → 手 | `× 100` 恢复为股 |
+| `bars()` 网络日线 | 元 (float) | 手 | `× 100` 转为股 |
+| `bars()` 网络分钟线 | 元 (float) | 手 | （分钟线 bars 不可用，走 transaction） |
+| `transaction()` 逐笔 | 元 (float) | 手 | `× 100` 转为股 |
+
+### 已知问题：mootdx 日线 volume 系数
+
+`MooTdxDailyBarReader` 的 `SECURITY_COEFFICIENT` 设计为 `[price_coef, vol_coef]`，对 OHLC 和 volume 使用相同系数。但 `.day` 文件中 OHLC 存为整数（分），需要系数转为元；volume 存为整数（股），不需要系数转换。
+
+```
+# mootdx daily_bar_reader.py _df_convert()
+new_row = (
+    datestr,
+    row_[1] * coefficient[0],  # OHLC: 分 → 元 ✓
+    ...
+    row_[5],                   # amount: 直接输出 ✓
+    row_[6] * coefficient[1],  # volume: 股 → 手 ✗ (不应乘 coef)
+)
+```
+
+修复位置在 `tdx_connector.py` 的 `_read_local()` 和 `_fetch_realtime_kline()` 中，对日线 volume `× 100` 恢复为股。
+
+### 已知问题：.lc1 文件解析器选择
+
+`.lc1` 文件的 OHLC 以 IEEE 754 float 存储。`TdxMinBarReader` 将这 4 字节当 int 解析再除以 100，导致 OHLC 值错误（如 10.96 → 10936228.25）。`TdxLCMinBarReader` 正确使用 float 格式解析。
+
+```
+# .lc1 文件格式（正确）: <HHfffffII>  → OHLC 是 float
+# .lc1 文件格式（错误）: <HHIIIIfII>  → OHLC 被当 int 解析
+```
+
+`_read_local()` 中 1 分钟周期统一使用 `TdxLCMinBarReader`。

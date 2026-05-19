@@ -212,10 +212,10 @@ __all__ = [
     "welcome",
 ]
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "zengbin93"
 __email__ = "zeng_bin8888@163.com"
-__date__ = "20260308"
+__date__ = "20260519"
 
 _LAZY_MODULES = {
     "svc": "czsc.svc",

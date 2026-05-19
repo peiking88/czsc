@@ -49,6 +49,18 @@ RESAMPLE_TARGET = {
 # 复权类型：czsc 中文 → tdxdata 英文
 FQ_MAP = {"前复权": "front", "后复权": "back", "不复权": "none"}
 
+# 盘中实时获取参数：czsc 周期 → (fetch_kline period, count)
+RT_KLINE_PARAMS = {
+    "1分钟": ("1m", 240),
+    "5分钟": ("5m", 48),
+    "15分钟": ("15m", 16),
+    "30分钟": ("30m", 8),
+    "60分钟": ("1h", 4),
+    "日线": ("1d", 2),
+    "周线": ("1w", 2),
+    "月线": ("1mon", 2),
+}
+
 # 本地读取方法映射
 PERIOD_METHOD = {"1d": "daily", "1m": "minute_1", "5m": "minute_5"}
 
@@ -291,66 +303,40 @@ def _is_trading_time() -> bool:
     return (time(9, 30) <= t <= time(11, 30)) or (time(13, 0) <= t <= time(15, 0))
 
 
-def _fetch_realtime_daily(code: str) -> pd.DataFrame:
-    """从实时接口获取当日日线快照，返回 tdxdata 标准格式"""
+def _fetch_realtime_kline(code: str, period: str, count: int, dividend_type: str) -> pd.DataFrame:
+    """获取盘中实时K线（仅当日数据），返回 tdxdata 标准格式（已复权）
+
+    通过 tdxdata.fetch_kline() 获取完整 OHLCV K线，然后应用复权因子。
+
+    :param code: 纯数字股票代码，如 "600519"
+    :param period: fetch_kline 周期，如 "1m"/"5m"/"15m"/"1d"
+    :param count: 获取K线数量
+    :param dividend_type: 复权类型，"front"/"back"/"none"
+    """
     from tdxdata.api import TdxData
 
     tdx = TdxData()
-    snap = tdx.fetch_realtime(stock_code=code)
+    df = tdx.fetch_kline(stock_code=code, period=period, count=count)
     tdx.close()
-    if snap is None or snap.empty:
-        return pd.DataFrame()
-    row = snap.iloc[0]
-    return pd.DataFrame([{
-        "stock_code": code,
-        "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
-        "open": row.get("open", pd.NA),
-        "high": row.get("high", pd.NA),
-        "low": row.get("low", pd.NA),
-        "close": row.get("close", pd.NA),
-        "volume": row.get("volume", 0),
-        "amount": row.get("amount", 0),
-    }])
 
-
-def _fetch_realtime_minute(code: str, suffix: int) -> pd.DataFrame:
-    """从实时接口获取当日分钟K线，返回 tdxdata 标准格式
-
-    suffix: 1=1分钟, 5=5分钟（从1分钟数据重采样）
-    """
-    from mootdx.quotes import Quotes
-    from tdxdata.sources.base import resample_kline
-
-    c = Quotes.factory(market="std")
-    today_str = pd.Timestamp.now().strftime("%Y%m%d")
-    df = c.minutes(symbol=code, date=today_str)
     if df is None or df.empty:
         return pd.DataFrame()
 
-    today = pd.Timestamp.now()
-    base = today.replace(hour=9, minute=30, second=0, microsecond=0)
+    # 只保留当日数据
+    today = pd.Timestamp.now().normalize()
+    if "date" in df.columns:
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df[df["date"] >= today]
 
-    records = []
-    for i, (_, row) in enumerate(df.iterrows()):
-        dt = base + pd.Timedelta(minutes=i + 1)
-        records.append({
-            "stock_code": code,
-            "date": dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "open": row["price"],
-            "high": row["price"],
-            "low": row["price"],
-            "close": row["price"],
-            "volume": int(row.get("volume", 0)),
-            "amount": 0,
-        })
+    if df.empty:
+        return pd.DataFrame()
 
-    result = pd.DataFrame(records)
-    if result.empty or suffix == 1:
-        return result
+    # 应用复权
+    if dividend_type != "none":
+        df = _apply_adjust(df, code, dividend_type)
 
-    # 5分钟：从 1 分钟数据重采样（tdxdata 格式）
-    result["date"] = pd.to_datetime(result["date"])
-    return resample_kline(result, "5min")
+    return df
 
 
 def get_raw_bars(
@@ -433,31 +419,19 @@ def get_raw_bars(
     # 转换为 czsc 标准格式
     df = _to_czsc_columns(df, symbol)
 
-    # ── 盘中实时数据补充 ─────────────────────────────────────────────
+    # ── 盘中实时数据补充（已复权）─────────────────────────────────────
     if kwargs.get("realtime") and _is_trading_time():
         try:
-            rt_df = pd.DataFrame()
-            base_period = tdx_period  # 1m / 5m / 1d
-
-            if base_period == "1d":
-                raw_rt = _fetch_realtime_daily(code)
+            rt_params = RT_KLINE_PARAMS.get(freq_val)
+            if rt_params:
+                rt_period, rt_count = rt_params
+                raw_rt = _fetch_realtime_kline(code, rt_period, rt_count, dividend_type)
                 if not raw_rt.empty:
                     rt_df = _to_czsc_columns(raw_rt, symbol)
-            elif base_period in ("1m", "5m"):
-                suffix = 1 if base_period == "1m" else 5
-                raw_rt = _fetch_realtime_minute(code, suffix)
-                if not raw_rt.empty:
-                    rt_df = _to_czsc_columns(raw_rt, symbol)
-                    # 需要对实时分钟数据做重采样以匹配目标周期
-                    if need_resample and base_period == "5m":
-                        target = RESAMPLE_TARGET[freq_val]
-                        if not rt_df.empty:
-                            rt_df = _resample_czsc(rt_df, target)
-
-            if not rt_df.empty:
-                df = pd.concat([df, rt_df], ignore_index=True)
-                df = df.drop_duplicates(subset=["dt"], keep="last")
-                df = df.sort_values("dt").reset_index(drop=True)
+                    if not rt_df.empty:
+                        df = pd.concat([df, rt_df], ignore_index=True)
+                        df = df.drop_duplicates(subset=["dt"], keep="last")
+                        df = df.sort_values("dt").reset_index(drop=True)
         except Exception as e:
             logger.warning(f"盘中实时数据获取失败: {e}")
 

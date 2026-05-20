@@ -23,7 +23,7 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars
+from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars, prefetch_factors
 from czsc.core import CZSC, Freq
 
 FREQS = [
@@ -250,42 +250,7 @@ def _comprehensive_interpretation(results):
                              "多数周期方向一致，共振效果较好。")
             lines.append("")
 
-    # ── 3. 力度与加速度分析 ──
-    lines.append("### 力度与加速度分析")
-    lines.append("")
-    lines.append("| 周期 | 方向 | R² | 力度 | 加速度 | 评价 |")
-    lines.append("|------|------|-----|------|--------|------|")
-    for label, _ in FREQS:
-        r = valid.get(label)
-        if r:
-            bi = r["last_bi"]
-            _dir = "↑" if "上升" in r["direction"] else "↓"
-            _rsq = bi.rsq
-            _power = bi.power
-            _accel = bi.acceleration
-
-            if _rsq > 0.8:
-                _eval = "趋势明确"
-            elif _rsq > 0.6:
-                _eval = "趋势尚可"
-            else:
-                _eval = "趋势散乱"
-
-            if _accel > 10:
-                _eval += "，加速中"
-            elif _accel < -10:
-                _eval += "，反向加速"
-            elif _accel < 0:
-                _eval += "，减速中"
-            else:
-                _eval += "，匀速"
-
-            lines.append(f"| {label} | {_dir} | {_rsq:.3f} | {_power:.1f} | {_accel:.1f} | {_eval} |")
-        else:
-            lines.append(f"| {label} | - | - | - | - | 数据缺失 |")
-    lines.append("")
-
-    # ── 4. 关键观察与风险提示 ──
+    # ── 3. 关键观察与风险提示 ──
     lines.append("### 关键观察与风险提示")
     lines.append("")
 
@@ -349,18 +314,35 @@ def format_md(symbol, results, sdt, edt, name=None, in_merged=False):
 
     # ── 概览表 ──
     lines.append("## 多周期概览")
-    lines.append("| 周期 | K线数 | 笔数 | 当前趋势 | 力度 | R² | 加速度 |")
-    lines.append("|------|-------|------|----------|------|-----|--------|")
+    lines.append("| 周期 | K线数 | 笔数 | 当前趋势 | 力度 | R² | 加速度 | 评价 |")
+    lines.append("|------|-------|------|----------|------|-----|--------|------|")
     for label, _ in FREQS:
         r = results.get(label)
         if r and "error" not in r:
+            bi = r['last_bi']
+            _rsq = bi.rsq
+            _accel = bi.acceleration
+            if _rsq > 0.8:
+                _eval = "趋势明确"
+            elif _rsq > 0.6:
+                _eval = "趋势尚可"
+            else:
+                _eval = "趋势散乱"
+            if _accel > 10:
+                _eval += "，加速中"
+            elif _accel < -10:
+                _eval += "，反向加速"
+            elif _accel < 0:
+                _eval += "，减速中"
+            else:
+                _eval += "，匀速"
             lines.append(
                 f"| {label} | {r['bar_count']} | {r['bi_count']} | {r['direction']} "
-                f"| {r['last_bi'].power:.1f} | {r['last_bi'].rsq:.3f} | {r['last_bi'].acceleration:.1f} |"
+                f"| {bi.power:.1f} | {_rsq:.3f} | {_accel:.1f} | {_eval} |"
             )
         else:
             err = r.get("error", "N/A") if r else "N/A"
-            lines.append(f"| {label} | - | - | - | - | - | {err} |")
+            lines.append(f"| {label} | - | - | - | - | - | {err} | - |")
     lines.append("")
 
     # ── 趋势质量评估 ──
@@ -513,6 +495,10 @@ def main():
     name_map = _batch_stock_names(symbols, devnull)
     for s in symbols:
         logger.info(f"{s} → {name_map.get(s, s)}")
+
+    # 预取复权因子（缓存 1 天，后续 get_raw_bars 命中缓存跳过网络请求）
+    print(f"预取复权因子 ({len(symbols)}只)...")
+    prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
 
     # 并行分析
     all_results = {}

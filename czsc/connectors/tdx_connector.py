@@ -235,23 +235,41 @@ def _read_local(symbol: str, period: str, tdxdir: str) -> pd.DataFrame:
 
 
 def _apply_adjust(df: pd.DataFrame, code: str, dividend_type: str, force_refresh: bool = False) -> pd.DataFrame:
-    """应用复权因子，委托给 tdxdata 内置的 apply_adjust"""
+    """应用复权因子（缓存优先，网络兜底）"""
     if dividend_type == "none":
         return df
 
     try:
-        from mootdx.quotes import Quotes
-        from tdxdata.sources.adjust import ADJUST_MAP, apply_adjust
+        from tdxdata.sources.adjust import ADJUST_MAP, fetch_factor
 
         adjust = ADJUST_MAP.get(dividend_type)
         if not adjust:
             return df
 
-        quotes_client = Quotes.factory(market="std")
-        return apply_adjust(df, code, adjust, quotes_client=quotes_client)
+        # 尝试从缓存加载因子
+        factor_df = None
+        if not force_refresh:
+            factor_df = _load_factor_cache(code, adjust)
+
+        # 缓存未命中则从网络获取
+        if factor_df is None or factor_df.empty:
+            from mootdx.quotes import Quotes
+
+            quotes_client = Quotes.factory(market="std")
+            try:
+                factor_df = fetch_factor(code, adjust, quotes_client)
+                if factor_df is not None and not factor_df.empty:
+                    _save_factor_cache(code, adjust, factor_df)
+            except Exception as e:
+                logger.warning(f"复权因子获取失败 {code}: {e}")
+                return df
+
+        if factor_df is not None and not factor_df.empty:
+            return _apply_factor(df, factor_df, adjust)
+        return df
 
     except Exception as e:
-        logger.warning(f"复权因子获取失败，使用未复权数据: {e}")
+        logger.warning(f"复权失败，使用未复权数据: {e}")
 
     return df
 
@@ -552,12 +570,64 @@ def get_symbols(step: str = "check") -> list[str]:
     return SYMBOL_GROUPS.get(step, SYMBOL_GROUPS["check"])
 
 
+def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_workers: int = 4) -> dict[str, bool]:
+    """预取复权因子并缓存，后续 get_raw_bars 调用将命中缓存避免重复网络请求
+
+    :param symbols: 股票代码列表，如 ["600519.SH", "000001.SZ"]
+    :param dividend_type: 复权类型，"前复权"/"后复权"/"不复权"
+    :param max_workers: 并行线程数
+    :return: {symbol: success} 字典
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from tdxdata.sources.adjust import ADJUST_MAP, fetch_factor
+
+    dividend_type = FQ_MAP.get(dividend_type, dividend_type)
+    adjust = ADJUST_MAP.get(dividend_type)
+    if not adjust:
+        logger.info("不复权模式，跳过因子预取")
+        return {s: True for s in symbols}
+
+    from mootdx.quotes import Quotes
+
+    quotes_client = Quotes.factory(market="std")
+    results = {}
+
+    def _fetch_one(code):
+        code = _normalize_symbol(code)
+        # 先检查缓存，避免重复请求
+        cached = _load_factor_cache(code, adjust)
+        if cached is not None and not cached.empty:
+            logger.debug(f"因子缓存命中: {code}")
+            return code, True
+        try:
+            factor_df = fetch_factor(code, adjust, quotes_client)
+            if factor_df is not None and not factor_df.empty:
+                _save_factor_cache(code, adjust, factor_df)
+                logger.info(f"因子已缓存: {code} ({len(factor_df)} 条)")
+            return code, True
+        except Exception as e:
+            logger.warning(f"因子预取失败 {code}: {e}")
+            return code, False
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(symbols))) as executor:
+        futures = {executor.submit(_fetch_one, s): s for s in symbols}
+        for future in as_completed(futures):
+            code, success = future.result()
+            results[futures[future]] = success
+
+    ok = sum(1 for v in results.values() if v)
+    logger.info(f"因子预取完成: {ok}/{len(symbols)} 成功")
+    return results
+
+
 # ---------------------------------------------------------------------------
 # 批量同步导入
 # ---------------------------------------------------------------------------
 
 # 缓存存储目录
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".czsc", "tdxdata")
+FACTOR_CACHE_DIR = os.path.join(CACHE_DIR, "factors")
 
 # 市场前缀映射
 _MARKET_PREFIX = {"sh": ".SH", "sz": ".SZ", "bj": ".BJ"}
@@ -625,6 +695,77 @@ def _save_cache(df: pd.DataFrame, symbol: str, freq_val: str) -> None:
     df = df.drop_duplicates(subset=["dt"], keep="last")
     df = df.sort_values("dt").reset_index(drop=True)
     df.to_parquet(path, index=False)
+
+
+def _load_factor_cache(code: str, adjust: str) -> pd.DataFrame | None:
+    """读取缓存的复权因子，无缓存返回 None"""
+    path = os.path.join(FACTOR_CACHE_DIR, f"{code}_{adjust}.parquet")
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_parquet(path)
+        if df.index.name != "date":
+            if "date" in df.columns:
+                df = df.set_index("date")
+        df.index = pd.to_datetime(df.index)
+        return df
+    except Exception as e:
+        logger.warning(f"读取因子缓存失败 {path}: {e}")
+        return None
+
+
+def _save_factor_cache(code: str, adjust: str, factor_df: pd.DataFrame) -> None:
+    """保存复权因子到缓存"""
+    os.makedirs(FACTOR_CACHE_DIR, exist_ok=True)
+    path = os.path.join(FACTOR_CACHE_DIR, f"{code}_{adjust}.parquet")
+    if factor_df.index.name != "date" and "date" in factor_df.columns:
+        factor_df = factor_df.set_index("date")
+    factor_df.to_parquet(path, index=True)
+
+
+def _apply_factor(df: pd.DataFrame, factor_df: pd.DataFrame, adjust: str) -> pd.DataFrame:
+    """将已缓存的复权因子应用到 OHLC 数据"""
+    df = df.copy()
+    date_col = "date" if "date" in df.columns else "datetime"
+    if date_col not in df.columns:
+        return df
+
+    df.loc[:, date_col] = pd.to_datetime(df[date_col].astype(str))
+    factor_df = factor_df.copy()
+    factor_df.index = pd.to_datetime(factor_df.index)
+
+    # pandas 3.x 兼容：统一 datetime64 精度
+    common_dtype = "datetime64[us]"
+    df.loc[:, date_col] = df[date_col].astype(common_dtype)
+    factor_df.index = factor_df.index.astype(common_dtype)
+
+    df = df.sort_values(date_col).reset_index(drop=True)
+    factor_df = factor_df.sort_index()
+
+    merged = pd.merge_asof(
+        df,
+        factor_df[["factor"]],
+        left_on=date_col,
+        right_index=True,
+        direction="backward" if adjust == "qfq" else "forward",
+    )
+
+    if "factor" not in merged.columns:
+        return df
+
+    merged.loc[:, "factor"] = merged["factor"].ffill().bfill().fillna(1.0)
+
+    if adjust == "qfq":
+        latest_factor = factor_df["factor"].iloc[-1]
+        if latest_factor > 0:
+            merged.loc[:, "factor"] = merged["factor"] / latest_factor
+
+    for col in ["open", "high", "low", "close"]:
+        if col in merged.columns:
+            merged.loc[:, col] = merged[col] * merged["factor"]
+
+    merged = merged.drop(columns=["factor"], errors="ignore")
+    return merged
 
 
 def _sync_single_freq(

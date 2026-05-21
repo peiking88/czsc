@@ -29,7 +29,7 @@ def normalize_feature(df, x_col, method="standard", **kwargs):
             return scale(x, **kwargs)
         raise ValueError(f"unsupported normalize method: {method}")
 
-    df[x_col] = df.groupby("dt")[x_col].transform(_norm)
+    df.loc[:, x_col] = df.groupby("dt")[x_col].transform(_norm)
     return df
 
 

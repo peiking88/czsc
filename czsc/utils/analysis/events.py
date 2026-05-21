@@ -47,15 +47,14 @@ def overlap(df: pd.DataFrame, col: str, **kwargs):
         df = df.copy()
 
     df = df.sort_values(["symbol", "dt"]).reset_index(drop=True)
-    df["dt"] = pd.to_datetime(df["dt"])
+    df.loc[:, "dt"] = pd.to_datetime(df["dt"])
 
     new_col = kwargs.get("new_col", f"{col}_overlap")
 
     for _symbol, dfg in df.groupby("symbol"):
         # 计算 col 相同值的连续个数，从 1 开始计数
-        dfg[new_col] = dfg.groupby(df[col].ne(df[col].shift()).cumsum()).cumcount() + 1
-        df.loc[dfg.index, new_col] = dfg[new_col]
+        df.loc[dfg.index, new_col] = dfg.groupby(dfg[col].ne(dfg[col].shift()).cumsum()).cumcount() + 1
 
     max_overlap = kwargs.get("max_overlap", 10)
-    df[new_col] = np.where(df[new_col] > max_overlap, max_overlap, df[new_col])
+    df.loc[:, new_col] = np.where(df[new_col] > max_overlap, max_overlap, df[new_col])
     return df

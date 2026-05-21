@@ -44,6 +44,10 @@ def _setup_logging(log_file: str) -> logging.Logger:
     except ImportError:
         pass
 
+    # 抑制第三方库日志噪声（XDXR 解析失败等不影响结果的错误）
+    for noisy in ("PYTDX2", "opentdx", "mootdx"):
+        logging.getLogger(noisy).setLevel(logging.CRITICAL)
+
     logger = logging.getLogger("predict")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()

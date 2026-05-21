@@ -592,7 +592,6 @@ def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_w
 
     from mootdx.quotes import Quotes
 
-    quotes_client = Quotes.factory(market="std")
     results = {}
 
     def _fetch_one(code):
@@ -602,6 +601,7 @@ def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_w
         if cached is not None and not cached.empty:
             logger.debug(f"因子缓存命中: {code}")
             return code, True
+        quotes_client = Quotes.factory(market="std")
         try:
             factor_df = fetch_factor(code, adjust, quotes_client)
             if factor_df is not None and not factor_df.empty:
@@ -611,6 +611,11 @@ def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_w
         except Exception as e:
             logger.warning(f"因子预取失败 {code}: {e}")
             return code, False
+        finally:
+            try:
+                quotes_client.close()
+            except Exception:
+                pass
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(symbols))) as executor:
         futures = {executor.submit(_fetch_one, s): s for s in symbols}
@@ -724,7 +729,7 @@ def _load_factor_cache(code: str, adjust: str, max_age_hours: int = _FACTOR_CACH
         if df.index.name != "date":
             if "date" in df.columns:
                 df = df.set_index("date")
-        df.index = pd.to_datetime(df.index)
+        df.index = pd.to_datetime(df.index.astype(str))
         return df
     except Exception as e:
         logger.warning(f"读取因子缓存失败 {path}: {e}")
@@ -749,12 +754,11 @@ def _apply_factor(df: pd.DataFrame, factor_df: pd.DataFrame, adjust: str) -> pd.
 
     df.loc[:, date_col] = pd.to_datetime(df[date_col].astype(str))
     factor_df = factor_df.copy()
-    factor_df.index = pd.to_datetime(factor_df.index)
+    factor_df.index = pd.to_datetime(factor_df.index.astype(str))
 
-    # pandas 3.x 兼容：统一 datetime64 精度
-    common_dtype = "datetime64[us]"
-    df.loc[:, date_col] = df[date_col].astype(common_dtype)
-    factor_df.index = factor_df.index.astype(common_dtype)
+    # 上方两边的 pd.to_datetime(.astype(str)) 返回相同精度，无需再转换；
+    # 若用 astype("datetime64[us]") 反而导致失衡：Series 侧 .loc 赋值
+    # 会被 pandas 静默回退为列原有 dtype，而 Index 侧正常转换。
 
     df = df.sort_values(date_col).reset_index(drop=True)
     factor_df = factor_df.sort_index()

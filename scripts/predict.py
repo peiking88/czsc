@@ -128,9 +128,9 @@ def assess_trend(czsc_obj):
         ubi_dir = "↓ 向下" if last_bi.direction.value == "向上" else "↑ 向上"
         ubi_info = (
             f"🔄 未完成笔 ({ubi_bar_count} 根K线)："
-            f"方向 {ubi_dir} | "
-            f"起始 {str(ubi_bars[0].dt)[:10]} | "
-            f"最高 {ubi_high:.2f} | 最低 {ubi_low:.2f}"
+            f"方向 {ubi_dir} · "
+            f"起始 {str(ubi_bars[0].dt)[:10]} · "
+            f"最高 {ubi_high:.2f} · 最低 {ubi_low:.2f}"
         )
 
     return {
@@ -193,7 +193,7 @@ def _overall_signal(results):
 def _daily_reversal_risk(results):
     """评估日线反转风险，综合未完成笔、反向加速、力度衰竭、多周期背离等信号打分
 
-    返回 (risk_label, risk_markdown) 元组。risk_label 为 None 表示无日线数据。
+    返回 (_, risk_markdown) 元组。risk_markdown 为空字符串表示无日线数据。
     """
     daily = results.get("1d")
     if not daily or "error" in daily:
@@ -201,7 +201,7 @@ def _daily_reversal_risk(results):
 
     has_ubi = bool(daily.get("ubi_info"))
     if not has_ubi:
-        return "✅ 无反转信号", "日线无未完成笔，当前趋势延续中，暂无反转迹象。"
+        return "", "日线无未完成笔，当前趋势延续中，暂无反转迹象。"
 
     daily_dir = "向上" if "上升" in daily["direction"] else "向下"
     reverse_dir = "向下" if daily_dir == "向上" else "向上"
@@ -274,14 +274,14 @@ def _daily_reversal_risk(results):
     else:
         trade_label = "**建议减仓**"
 
-    risk_md = f"""{level}（得分 {score}/{max_score}） {trade_label}
+    risk_md = f"""得分 {score}/{max_score} {trade_label}
 
 触发信号：
 {chr(10).join(signals)}
 
 建议：{advice}"""
 
-    return level, risk_md
+    return "", risk_md
 
 
 def _comprehensive_interpretation(results):
@@ -434,60 +434,18 @@ def format_md(symbol, results, name=None, in_merged=False):
         lines.append(f'<a id="stock-{anchor}"></a>')
     lines.append(f"# {display} 缠论趋势预测")
     lines.append("")
-    lines.append(f"> 综合信号: {_overall_signal(results)}")
-    lines.append("")
-
-    # ── 概览表 ──
-    lines.append("## 多周期概览")
-    lines.append("| 周期 | K线数 | 笔数 | 当前趋势 | 力度 | R² | 加速度 | 评价 |")
-    lines.append("|------|-------|------|----------|------|-----|--------|------|")
-    for label, _ in FREQS:
-        r = results.get(label)
-        if r and "error" not in r:
-            bi = r['last_bi']
-            _rsq = bi.rsq
-            _accel = bi.acceleration
-            if _rsq > 0.8:
-                _eval = "趋势明确"
-            elif _rsq > 0.6:
-                _eval = "趋势尚可"
-            else:
-                _eval = "趋势散乱"
-            if _accel > 10:
-                _eval += "，加速中"
-            elif _accel < -10:
-                _eval += "，反向加速"
-            elif _accel < 0:
-                _eval += "，减速中"
-            else:
-                _eval += "，匀速"
-            # 日线行追加反转风险标注
-            if label == "1d":
-                risk_label, _ = _daily_reversal_risk(results)
-                if risk_label:
-                    _eval += f"，{risk_label}"
-            lines.append(
-                f"| {label} | {r['bar_count']} | {r['bi_count']} | {r['direction']} "
-                f"| {bi.power:.1f} | {_rsq:.3f} | {_accel:.1f} | {_eval} |"
-            )
-        else:
-            err = r.get("error", "N/A") if r else "N/A"
-            lines.append(f"| {label} | - | - | - | - | - | {err} | - |")
-    lines.append("")
-
     # ── 趋势质量评估 ──
     lines.append("## 趋势质量评估")
     lines.append("")
-    lines.append("| 周期 | 趋势规整度 | 加速度 | 力度评估 | 当前趋势 | 未完成笔 |")
-    lines.append("|------|-----------|--------|---------|---------|---------|")
+    lines.append("| 周期 | 未完成笔 | 之前趋势 | 趋势规整度 | 加速度 | 力度评估 |")
+    lines.append("|------|---------|---------|-----------|--------|---------|")
     for label, _ in FREQS:
         r = results.get(label)
         if r and "error" not in r:
             ubi = r["ubi_info"] if r["ubi_info"] else "无"
             dir_with_power = f"{r['direction']} (力度={r['last_bi'].power:.1f})"
             lines.append(
-                f"| {label} | {r['rsq_msg']} | {r['accel_msg']} | {r['power_msg']} "
-                f"| {dir_with_power} | {ubi} |"
+                f"| {label} | {ubi} | {dir_with_power} | {r['rsq_msg']} | {r['accel_msg']} | {r['power_msg']} |"
             )
         else:
             err = r.get("error", "数据获取失败") if r else "未知错误"

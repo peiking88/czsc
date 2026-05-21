@@ -194,4 +194,13 @@ uv run python scripts/predict.py 600519.SH 000001.SZ 600000.SH
 - 合并报告优化：`format_md` 多周期概览表增加"评价"列，合并力度/加速度分析，删除冗余小节
 - 复权因子缓存：新增 `prefetch_factors()` 预取因子并行缓存，`_apply_adjust` 缓存优先减少网络请求
 - 预测脚本：清单获取后先预取复权因子，再进入并行预测
-- 版本升至 1.6.0
+- 版本升至 1.5.2
+
+### 2026-05-21 07:35:31
+```
+ README.md                        |  21 ++++++
+ czsc/__init__.py                 |   4 +-
+ czsc/connectors/tdx_connector.py | 153 +++++++++++++++++++++++++++++++++++++--
+ scripts/predict.py               |  68 +++++++----------
+ 4 files changed, 197 insertions(+), 49 deletions(-)
+```

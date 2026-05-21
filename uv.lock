@@ -2133,7 +2133,7 @@ wheels = [
 
 [[package]]
 name = "opentdx"
-version = "0.5.10"
+version = "0.5.11"
 source = { directory = "/home/li/peiking88/opentdx" }
 dependencies = [
     { name = "click" },
@@ -3533,7 +3533,7 @@ wheels = [
 
 [[package]]
 name = "tdxdata"
-version = "1.0.0"
+version = "1.0.1"
 source = { directory = "/home/li/peiking88/tdxdata" }
 dependencies = [
     { name = "mootdx" },

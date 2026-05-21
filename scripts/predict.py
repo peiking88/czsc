@@ -119,13 +119,15 @@ def assess_trend(czsc_obj):
     direction = "上升笔 📈" if last_bi.direction.value == "向上" else "下降笔 📉"
 
     ubi_info = ""
+    ubi_bar_count = 0
     if czsc_obj.bars_ubi:
         ubi_bars = czsc_obj.bars_ubi
+        ubi_bar_count = len(ubi_bars)
         ubi_high = max(b.high for b in ubi_bars)
         ubi_low = min(b.low for b in ubi_bars)
         ubi_dir = "↓ 向下" if last_bi.direction.value == "向上" else "↑ 向上"
         ubi_info = (
-            f"🔄 未完成笔 ({len(ubi_bars)} 根K线)："
+            f"🔄 未完成笔 ({ubi_bar_count} 根K线)："
             f"方向 {ubi_dir} | "
             f"起始 {str(ubi_bars[0].dt)[:10]} | "
             f"最高 {ubi_high:.2f} | 最低 {ubi_low:.2f}"
@@ -137,6 +139,7 @@ def assess_trend(czsc_obj):
         "power_msg": power_msg,
         "direction": direction,
         "ubi_info": ubi_info,
+        "ubi_bar_count": ubi_bar_count,
         "last_bi": last_bi,
         "bi_count": len(bi_list),
         "bar_count": len(czsc_obj.bars_raw),
@@ -185,6 +188,100 @@ def _overall_signal(results):
         return f"🔴 偏空 ({ups}↑ {downs}↓)"
     else:
         return f"🟡 多空均衡 ({ups}↑ {downs}↓)"
+
+
+def _daily_reversal_risk(results):
+    """评估日线反转风险，综合未完成笔、反向加速、力度衰竭、多周期背离等信号打分
+
+    返回 (risk_label, risk_markdown) 元组。risk_label 为 None 表示无日线数据。
+    """
+    daily = results.get("1d")
+    if not daily or "error" in daily:
+        return None, ""
+
+    has_ubi = bool(daily.get("ubi_info"))
+    if not has_ubi:
+        return "✅ 无反转信号", "日线无未完成笔，当前趋势延续中，暂无反转迹象。"
+
+    daily_dir = "向上" if "上升" in daily["direction"] else "向下"
+    reverse_dir = "向下" if daily_dir == "向上" else "向上"
+
+    score = 0
+    max_score = 10
+    signals = []
+
+    # 1. 日线未完成笔（必要条件已满足）
+    ubi_count = daily.get("ubi_bar_count", 0)
+    sig = f"- 日线未完成笔 ({ubi_count}根K线)，方向 **{reverse_dir}**，反转正在形成"
+    if ubi_count >= 5:
+        score += 1
+        sig += "，K线数量较多，接近笔确认"
+    signals.append(sig)
+
+    # 2. 日线反向加速
+    daily_accel = daily["last_bi"].acceleration
+    if daily_accel < -10:
+        score += 3
+        signals.append(f"- ⚠️ 日线反向加速 ({daily_accel:.1f})，反转动能强劲")
+
+    # 3. 日线力度衰竭
+    power_msg = daily.get("power_msg", "")
+    if "衰减 > 50%" in power_msg:
+        score += 2
+        signals.append("- ⚠️ 日线力度较前笔衰减超 50%，动能衰竭")
+    elif "力度递减" in power_msg:
+        score += 1
+        signals.append("- 日线力度递减，动能有所不足")
+
+    # 4. 多周期背离
+    intraday_labels = [l for l, _ in FREQS if l != "1d"]
+    opp_count = 0
+    for label in intraday_labels:
+        r = results.get(label)
+        if r and "error" not in r and r.get("direction"):
+            if daily_dir == "向上" and "下降" in r["direction"]:
+                opp_count += 1
+            elif daily_dir == "向下" and "上升" in r["direction"]:
+                opp_count += 1
+
+    if opp_count == len(intraday_labels):
+        score += 3
+        signals.append("- ⚠️ 多周期背离：60m/30m/15m 全部反向，大小级别共振反转")
+    elif opp_count >= 2:
+        score += 1
+        signals.append(f"- {opp_count} 个小级别反向，短周期不支持日线方向")
+
+    # 5. 日线 R² 偏低
+    daily_rsq = daily["last_bi"].rsq
+    if daily_rsq < 0.5:
+        score += 1
+        signals.append(f"- 日线 R²={daily_rsq:.3f}，趋势结构松散，易被反转")
+
+    # 风险等级
+    if score >= 4:
+        level = "🔴 高风险"
+        advice = "反转信号强烈，建议减仓或设置止损，等待日线笔确认后再入场。"
+    elif score >= 2:
+        level = "🟡 中风险"
+        advice = "有反转迹象，建议密切关注日线未完成笔的演变，控制仓位。"
+    else:
+        level = "🟢 低风险"
+        advice = "反转刚萌芽，力度尚弱，可继续持仓观察，注意止损。"
+
+    # 交易建议标注
+    if daily_dir == "向下":
+        trade_label = "**建议加仓**"
+    else:
+        trade_label = "**建议减仓**"
+
+    risk_md = f"""{level}（得分 {score}/{max_score}） {trade_label}
+
+触发信号：
+{chr(10).join(signals)}
+
+建议：{advice}"""
+
+    return level, risk_md
 
 
 def _comprehensive_interpretation(results):
@@ -254,8 +351,38 @@ def _comprehensive_interpretation(results):
                              "多数周期方向一致，共振效果较好。")
             lines.append("")
 
-    # ── 3. 关键观察与风险提示 ──
-    lines.append("### 关键观察与风险提示")
+    # ── 3. 日线反转风险评估 ──
+    if daily:
+        risk_label, risk_md = _daily_reversal_risk(results)
+        if risk_md:
+            lines.append("### 反转评估")
+            lines.append("")
+            lines.append(risk_md)
+            lines.append("")
+
+    # ── 3.5 分钟线共振反转检测 ──
+    if intraday_labels:
+        ubi_up = []    # 跌转升（当前向下，ubi 向上）
+        ubi_down = []  # 升转跌（当前向上，ubi 向下）
+        for label in intraday_labels:
+            r = valid[label]
+            if r.get("ubi_info"):
+                if "上升" in r["direction"]:
+                    ubi_down.append(label)
+                else:
+                    ubi_up.append(label)
+
+        if len(ubi_up) >= 2:
+            lines.append(f"**调整到位：**{', '.join(ubi_up)} 出现跌转升共振反转信号，"
+                         "分钟级别调整充分，可关注反弹机会。")
+            lines.append("")
+        elif len(ubi_down) >= 2:
+            lines.append(f"**反弹到位：**{', '.join(ubi_down)} 出现升转跌共振反转信号，"
+                         "分钟级别反弹动能衰竭，注意回调风险。")
+            lines.append("")
+
+    # ── 4. 关键观察 ──
+    lines.append("**关键观察：**")
     lines.append("")
 
     warnings = []
@@ -297,22 +424,16 @@ def _comprehensive_interpretation(results):
     return "\n".join(lines)
 
 
-def format_md(symbol, results, sdt, edt, name=None, in_merged=False):
+def format_md(symbol, results, name=None, in_merged=False):
     """格式化单只股票为 Markdown 报告"""
     display = f"{name}（{symbol}）" if name else symbol
     lines = []
 
-    # 合并报告模式下：添加锚点和回到概览跳转链接
     if in_merged:
         anchor = symbol.replace(".", "-")
         lines.append(f'<a id="stock-{anchor}"></a>')
-        lines.append(f"# {display} 缠论趋势预测")
-        lines.append("")
-        lines.append(f"[↑ 回到概览](#综合概览)")
-    else:
-        lines.append(f"# {display} 缠论趋势预测")
+    lines.append(f"# {display} 缠论趋势预测")
     lines.append("")
-    lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
     lines.append(f"> 综合信号: {_overall_signal(results)}")
     lines.append("")
 
@@ -340,6 +461,11 @@ def format_md(symbol, results, sdt, edt, name=None, in_merged=False):
                 _eval += "，减速中"
             else:
                 _eval += "，匀速"
+            # 日线行追加反转风险标注
+            if label == "1d":
+                risk_label, _ = _daily_reversal_risk(results)
+                if risk_label:
+                    _eval += f"，{risk_label}"
             lines.append(
                 f"| {label} | {r['bar_count']} | {r['bi_count']} | {r['direction']} "
                 f"| {bi.power:.1f} | {_rsq:.3f} | {_accel:.1f} | {_eval} |"
@@ -352,21 +478,21 @@ def format_md(symbol, results, sdt, edt, name=None, in_merged=False):
     # ── 趋势质量评估 ──
     lines.append("## 趋势质量评估")
     lines.append("")
+    lines.append("| 周期 | 趋势规整度 | 加速度 | 力度评估 | 当前趋势 | 未完成笔 |")
+    lines.append("|------|-----------|--------|---------|---------|---------|")
     for label, _ in FREQS:
-        lines.append(f"### {label}")
-        lines.append("")
         r = results.get(label)
         if r and "error" not in r:
-            lines.append(f"- {r['rsq_msg']}")
-            lines.append(f"- {r['accel_msg']}")
-            lines.append(f"- {r['power_msg']}")
-            lines.append(f"- 当前趋势：**{r['direction']}** (力度={r['last_bi'].power:.1f})")
-            if r["ubi_info"]:
-                lines.append(f"- {r['ubi_info']}")
+            ubi = r["ubi_info"] if r["ubi_info"] else "无"
+            dir_with_power = f"{r['direction']} (力度={r['last_bi'].power:.1f})"
+            lines.append(
+                f"| {label} | {r['rsq_msg']} | {r['accel_msg']} | {r['power_msg']} "
+                f"| {dir_with_power} | {ubi} |"
+            )
         else:
             err = r.get("error", "数据获取失败") if r else "未知错误"
-            lines.append(f"⚠️ {err}")
-        lines.append("")
+            lines.append(f"| {label} | ⚠️ {err} | - | - | - | - |")
+    lines.append("")
 
     # ── 综合解读 ──
     interp = _comprehensive_interpretation(results)
@@ -417,40 +543,18 @@ def _sort_key(symbol, all_results, name_map):
     return 5
 
 
-def _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=None):
+def _write_merged_report(symbols, all_results, filename, name_map=None):
     """生成多股票合并报告"""
     symbols = sorted(symbols, key=lambda s: _sort_key(s, all_results, name_map))
     lines = []
     lines.append(f"# 缠论趋势预测报告（{len(symbols)}只股票）")
-    lines.append("")
-    lines.append(f"> 数据范围: {sdt} ~ {edt} | 复权: 前复权")
-
-    stock_labels = []
-    for s in symbols:
-        n = (name_map or {}).get(s)
-        stock_labels.append(f"{n}（{s}）" if n else s)
-    lines.append(f"> 股票: {', '.join(stock_labels)}")
-    lines.append("")
-
-    # 汇总表
-    lines.append('<a id="综合概览"></a>')
-    lines.append("## 综合概览")
-    lines.append("| 股票 | 综合信号 |")
-    lines.append("|------|----------|")
-    for symbol in symbols:
-        signal = _overall_signal(all_results[symbol])
-        n = (name_map or {}).get(symbol)
-        display = f"{n}（{symbol}）" if n else symbol
-        anchor = symbol.replace(".", "-")
-        link = f"[{display}](#stock-{anchor})"
-        lines.append(f"| {link} | {signal} |")
     lines.append("")
 
     for symbol in symbols:
         lines.append("---")
         lines.append("")
         n = (name_map or {}).get(symbol)
-        md = format_md(symbol, all_results[symbol], sdt, edt, name=n, in_merged=True)
+        md = format_md(symbol, all_results[symbol], name=n, in_merged=True)
         lines.append(md)
         lines.append("")
 
@@ -541,11 +645,11 @@ def main():
 
     # 生成报告
     if len(symbols) == 1 and not from_zxg:
-        md = format_md(symbols[0], all_results[symbols[0]], sdt, edt, name=name_map.get(symbols[0]))
+        md = format_md(symbols[0], all_results[symbols[0]], name=name_map.get(symbols[0]))
         with open(filename, "w", encoding="utf-8") as f:
             f.write(md)
     else:
-        _write_merged_report(symbols, all_results, sdt, edt, filename, name_map=name_map)
+        _write_merged_report(symbols, all_results, filename, name_map=name_map)
 
     print(f"\n  → {filename}")
     print(f"  → {log_file}")

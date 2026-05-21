@@ -53,7 +53,7 @@ def to_standard_kline_format(
 
     # 确保dt列是datetime类型
     if "dt" in result.columns:
-        result["dt"] = pd.to_datetime(result["dt"])
+        result.loc[:, "dt"] = pd.to_datetime(result["dt"])
 
     return result
 

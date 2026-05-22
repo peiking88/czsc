@@ -92,13 +92,10 @@ uv run streamlit run streamlit_app.py
 
 ```bash
 # 单只或多只股票（空格分割）
-uv run python scripts/predict.py 600519.SH 000001.SZ 600000.SH
+uv run python scripts/predict.py 600519.SH 999999.SH 600000.SH
 ```
 
-输出 `output/predict_<股票代码>.md`，包含 1d / 60m / 30m / 15m 四个周期的：
-- 多周期概览表（K线数、笔数、趋势方向、力度、R²、加速度）
-- 综合方向信号（偏多/偏空/均衡）
-- 每周期趋势质量评估（R² 拟合度、加速度、力度衰减、当前趋势、未完成笔）
+输出 `output/czsc_<股票代码>.md`，包含 1d / 30m / 5m 三个周期的趋势质量评估表格。
 
 ## 使用案例
 
@@ -203,4 +200,13 @@ uv run python scripts/predict.py 600519.SH 000001.SZ 600000.SH
  czsc/connectors/tdx_connector.py | 153 +++++++++++++++++++++++++++++++++++++--
  scripts/predict.py               |  68 +++++++----------
  4 files changed, 197 insertions(+), 49 deletions(-)
+```
+
+### 2026-05-21 16:52:06
+```
+ czsc/__init__.py   |  2 +-
+ scripts/predict.py | 62 +++++++++---------------------------------------------
+ 2 files changed, 11 insertions(+), 53 deletions(-)
+```
+- 版本升至 1.6.3
 ```

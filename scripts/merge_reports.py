@@ -125,7 +125,6 @@ def merge(czsc_path: str, kronos_path: str, output_path: str) -> str:
     align_total = 0
     stock_blocks = []
 
-    current_cat = None
     for kcode, name, cat, ksection in kronos:
         czsc_raw = czsc.get(kcode, "")
         kronos_body = re.sub(r"^#### .+$\n?", "", ksection, count=1, flags=re.MULTILINE).strip()
@@ -141,10 +140,6 @@ def merge(czsc_path: str, kronos_path: str, output_path: str) -> str:
 
         # 拼接单只标的 block
         block = []
-        if cat and cat != current_cat:
-            current_cat = cat
-            block.append(f"## {current_cat}")
-            block.append("")
 
         suffix = " ★" if aligned else ""
         block.append(f"### {name}（{kcode}）{suffix}")

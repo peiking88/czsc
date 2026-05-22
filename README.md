@@ -97,6 +97,17 @@ uv run python scripts/predict.py 600519.SH 999999.SH 600000.SH
 
 输出 `output/czsc_<股票代码>.md`，包含 1d / 30m / 5m 三个周期的趋势质量评估表格。
 
+### 合并分析报告
+
+将缠论趋势评估与 Kronos 价格预测合并为综合分析报告：
+
+```bash
+uv run python scripts/merge_reports.py           # 自动检测最新文件
+uv run python scripts/merge_reports.py -d 20260523  # 指定日期
+```
+
+输出 `output/zxg_yyyymmdd.md`，Kronos 预测展示在前，缠论趋势表格在后，方向一致标的标 ★。
+
 ## 使用案例
 
 1. [使用 tqsdk 进行期货交易](https://s0cqcxuy3p.feishu.cn/wiki/wikcn41lQIAJ1f8v41Dj5eAmrub)

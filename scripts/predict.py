@@ -266,8 +266,6 @@ def format_md(symbol, results, name=None):
     else:
         lines.append(f"# {label} 缠论趋势预测")
     lines.append("")
-    # ── 趋势质量评估 ──
-    lines.append("## 趋势质量评估")
     lines.append("")
     labels = [l for l, _ in FREQS]
     rows = {"之前趋势": [], "趋势规整度": [], "加速度": [], "力度评估": [], "未完成笔": [], "未完成笔力度": []}

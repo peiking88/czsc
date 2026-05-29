@@ -358,6 +358,44 @@ def _overall_signal(results):
         return f"🟡 多空均衡 ({ups}↑ {downs}↓)"
 
 
+def _extract_bs_from_ubi(ubi_info):
+    """从未完成笔信息中提取买卖点文本"""
+    if not ubi_info:
+        return ""
+    for prefix in ("买卖点：", "买卖点:"):
+        if prefix in ubi_info:
+            return ubi_info.split(prefix)[-1].split("<br>")[0]
+    return ""
+
+
+def _position_alert(results):
+    """跨周期仓位提醒：三周期同时出现买点/卖点时提醒
+
+    加仓：1d + 30m + 5m 同时出现任意买点（一买/二买/三买）
+    减仓：1d + 30m + 5m 同时出现任意卖点（一卖/二卖/三卖）
+    """
+    for label in ("1d", "30m", "5m"):
+        r = results.get(label)
+        if not r or "error" in r:
+            return "", ""
+
+    d_bs = _extract_bs_from_ubi(results["1d"]["ubi_info"])
+    m30_bs = _extract_bs_from_ubi(results["30m"]["ubi_info"])
+    m5_bs = _extract_bs_from_ubi(results["5m"]["ubi_info"])
+
+    all_buy = all("买" in bs for bs in [d_bs, m30_bs, m5_bs])
+    all_sell = all("卖" in bs for bs in [d_bs, m30_bs, m5_bs])
+
+    if all_buy:
+        pts = "、".join(bs.split("（")[0] for bs in [d_bs, m30_bs, m5_bs])
+        return f"🔺 加仓：三周期共振买点（{pts}）", "add"
+    if all_sell:
+        pts = "、".join(bs.split("（")[0] for bs in [d_bs, m30_bs, m5_bs])
+        return f"🔻 减仓：三周期共振卖点（{pts}）", "reduce"
+
+    return "", ""
+
+
 def _ubi_star(results):
     """未完成笔方向星级标注：全向上 → ★★，日线向下+分钟向上 → ★"""
     daily = results.get("1d")
@@ -412,9 +450,17 @@ def format_md(symbol, results, name=None):
             rows["加速度"].append("-")
             rows["力度评估"].append("-")
 
+    # ── 跨周期仓位提醒 ──
+    alert_text, _ = _position_alert(results)
+    if alert_text:
+        # 追加到每个周期的未完成笔末尾（换行显示）
+        alert_line = f"<br>{alert_text}"
+        rows["未完成笔"] = [v + alert_line for v in rows["未完成笔"]]
+
+    # ── Markdown 表格 ──
     lines.append('<table style="border-collapse:collapse">')
-    lines.append('<colgroup><col style="width:4.5em;white-space:nowrap;text-align:center">')
-    lines.append("".join('<col style="width:auto;text-align:left">' for _ in labels))
+    lines.append('<colgroup><col style="width:8em;white-space:nowrap;text-align:center">')
+    lines.append("".join('<col style="text-align:left">' for _ in labels))
     lines.append("</colgroup>")
     lines.append('<tr><th style="text-align:center">指标</th>' + "".join(f"<th>{l}</th>" for l in labels) + "</tr>")
     for indicator, values in rows.items():
@@ -453,20 +499,23 @@ def _merged_filename(symbols):
 
 
 def _sort_key(symbol, all_results, name_map):
-    """排序键：上证指数 > 创业板指 > 偏多 > 多空均衡 > 偏空 > 其他"""
+    """排序键：上证指数 > 创业板指 > 加仓提醒 > 偏多 > 多空均衡 > 偏空 > 其他"""
     name = (name_map or {}).get(symbol, "")
     signal = _overall_signal(all_results[symbol])
+    alert, _ = _position_alert(all_results[symbol])
     if "上证指数" in name:
         return 0
     if "创业板指" in name:
         return 1
-    if "偏多" in signal:
+    if alert and "加仓" in alert:
         return 2
-    if "多空均衡" in signal:
+    if "偏多" in signal:
         return 3
-    if "偏空" in signal:
+    if "多空均衡" in signal:
         return 4
-    return 5
+    if "偏空" in signal:
+        return 5
+    return 6
 
 
 def _write_merged_report(symbols, all_results, filename, name_map=None):
@@ -489,7 +538,7 @@ def _write_merged_report(symbols, all_results, filename, name_map=None):
 def main():
     parser = argparse.ArgumentParser(description="缠论趋势预测")
     parser.add_argument("symbols", nargs="*", help="股票代码，如 600519.SH 999999.SH")
-    parser.add_argument("-n", "--workers", type=int, default=4, help="并行线程数（默认 4）")
+    parser.add_argument("-n", "--workers", type=int, default=16, help="并行线程数（默认 16）")
     args = parser.parse_args()
 
     # 解析股票列表：命令行参数优先，否则读取TDX自选股
@@ -516,6 +565,8 @@ def main():
     log_file = f"output/predict_{edt.replace('-', '')}.log"
     logger = _setup_logging(log_file)
 
+    import time
+    t_start = time.time()
     print(f"数据范围: {sdt} ~ {edt}")
     print(f"待预测({len(symbols)}): {', '.join(symbols)}")
     print(f"并发数: {args.workers}")
@@ -577,7 +628,8 @@ def main():
 
     print(f"\n  → {filename}")
     print(f"  → {log_file}")
-    print(f"完成，共生成 1 份报告 → output/")
+    elapsed = time.time() - t_start
+    print(f"完成，共生成 1 份报告，耗时 {elapsed:.1f} 秒")
 
 
 if __name__ == "__main__":

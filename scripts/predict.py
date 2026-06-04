@@ -246,7 +246,7 @@ def assess_trend(czsc_obj, freq_label="1d"):
         last_fx_power = "-"
         if ubi_fxs:
             last_fx = ubi_fxs[-1]
-            fx_mark = "顶分型" if last_fx.mark.value == "顶" else "底分型"
+            fx_mark = "顶分型" if last_fx.mark.value == "顶分型" else "底分型"
             last_fx_power = last_fx.power_str
             fx_text = f"{fx_mark}({last_fx_power})"
 

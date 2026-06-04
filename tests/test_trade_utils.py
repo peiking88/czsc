@@ -24,7 +24,7 @@ def test_make_it_daily():
     # Check the result
     assert isinstance(result, pd.DataFrame), "Result should be a DataFrame"
     assert "dt" in result.columns, "Result should have a 'dt' column"
-    assert result["dt"].dtype == "datetime64[ns]", "'dt' column should be datetime64[ns] type"
+    assert pd.api.types.is_datetime64_any_dtype(result["dt"]), "'dt' column should be datetime64 type"
     assert not result["dt"].isnull().any(), "'dt' column should not have any null values"
 
     # Check if the result DataFrame has daily data

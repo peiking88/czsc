@@ -326,3 +326,23 @@ uv run ruff check czsc/ tests/
 
 * 链接：https://pan.baidu.com/s/1RXkP3188F0qu8Yk6CjbxRQ
 * 提取码：vhue
+
+### 1.7.3 (2026-06-04)
+
+- 新增: Kronos + CZSC 联合分析报告合并脚本 `scripts/merge_kronos_czsc.py`
+- 支持按日期合并两份报告，按 指数→看涨→看平→看跌 分组展示
+- 目录采用横向表格排版，每行 5 列，方便浏览
+
+### 1.7.2 (2026-06-04)
+
+- 新增: 多周期强分型+买卖点扫描脚本 `scripts/fx_strong_backtest.py`
+- 新增: 分型回测脚本 `scripts/fx_backtest.py`
+- 新增: 买卖点回测脚本 `scripts/bs_points_backtest.py`
+
+### 2026-06-04 18:35:52
+```
+ Cargo.toml                   |   2 +-
+ README.md                    |  12 +++++
+ scripts/merge_kronos_czsc.py | 320 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 333 insertions(+), 1 deletion(-)
+```

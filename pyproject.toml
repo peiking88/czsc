@@ -34,12 +34,10 @@ authors = [
 keywords = ["缠论", "技术分析", "A股", "期货", "缠中说禅", "量化", "QUANT", "程序化交易"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     # 核心数据处理
     "pandas>=1.0.0",
@@ -60,6 +58,7 @@ dependencies = [
     # - wbt 为硬依赖，提供 WeightBacktest / daily_performance / top_drawdowns / mock 等
     # - talib-rs 见 [project.optional-dependencies].test，运行时代码不依赖它
     "wbt",
+    "TA-Lib",
     # 图表和可视化（czsc 的所有可视化统一由 plotly 实现，
     # fig.show() 在浏览器打开或 plot_*(to_html=True) 写 HTML 文件）
     "plotly",
@@ -68,7 +67,16 @@ dependencies = [
     "loguru",
     "dill",
     "tenacity",
+    # TDX 数据连接器依赖
+    "tdxdata>=1.0.1",
+    "mootdx>=2.0.5",
+    "opentdx>=0.5.13",
 ]
+
+[tool.uv.sources]
+tdxdata = { path = "/home/li/peiking88/tdxdata", editable = true }
+mootdx = { path = "/home/li/peiking88/mootdx", editable = true }
+opentdx = { path = "/home/li/peiking88/opentdx", editable = true }
 
 [[tool.uv.index]]
 url = "https://pypi.python.org/simple"

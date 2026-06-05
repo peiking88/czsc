@@ -102,6 +102,54 @@ def _find_divergence(series, closes, lookback=80):
     return ""
 
 
+def _fx_enhanced_power(fx):
+    """增强分型强度判定：在原始 power_str 基础上叠加影线和成交量因子
+
+    顶分型：上影线占比越高 → 拒绝信号越强
+    底分型：下影线占比越高 → 支撑信号越强
+    成交量：中间K线量能相对前后K线放大 → 信号更可靠
+
+    返回格式："强|长上影|放量" 或 "中" 等
+    """
+    power = fx.power_str  # 原始强度：强/中/弱
+    is_ding = fx.mark.value == "顶分型"
+    tags = [power]
+
+    if len(fx.elements) < 3:
+        return power
+
+    mid = fx.elements[1]  # 分型极值K线
+    prev = fx.elements[0]
+    nxt = fx.elements[2]
+
+    body = abs(mid.close - mid.open)
+    total_range = mid.high - mid.low
+    if total_range <= 0:
+        return power
+
+    # ── 影线因子 ──
+    upper_shadow = mid.high - max(mid.close, mid.open)
+    lower_shadow = min(mid.close, mid.open) - mid.low
+    upper_pct = upper_shadow / total_range * 100
+    lower_pct = lower_shadow / total_range * 100
+
+    if is_ding and upper_pct >= 40:
+        tags.append("长上影")
+    elif not is_ding and lower_pct >= 40:
+        tags.append("长下影")
+
+    # ── 成交量因子 ──
+    # 中间K线量 vs 前后K线平均量
+    avg_vol = (prev.vol + nxt.vol) / 2 if (prev.vol + nxt.vol) > 0 else 1
+    vol_ratio = mid.vol / avg_vol if avg_vol > 0 else 1
+    if vol_ratio >= 1.5:
+        tags.append("放量")
+    elif vol_ratio <= 0.6:
+        tags.append("缩量")
+
+    return "|".join(tags) if len(tags) > 1 else power
+
+
 def _macd_cci_status(bars_raw):
     """计算 MACD 和 CCI 当前状态（含背离检测），返回 (macd_text, cci_text)"""
     closes = np.array([b.close for b in bars_raw], dtype=float)
@@ -240,14 +288,14 @@ def assess_trend(czsc_obj, freq_label="1d"):
         power_val = last_close - first_close
         price_pct = power_val / first_close * 100 if first_close > 0 else 0
 
-        # ── 分型 ──
+        # ── 分型（增强：影线+成交量） ──
         ubi_fxs = czsc_obj.ubi_fxs
         fx_text = "-"
         last_fx_power = "-"
         if ubi_fxs:
             last_fx = ubi_fxs[-1]
             fx_mark = "顶分型" if last_fx.mark.value == "顶分型" else "底分型"
-            last_fx_power = last_fx.power_str
+            last_fx_power = _fx_enhanced_power(last_fx)
             fx_text = f"{fx_mark}({last_fx_power})"
 
         # ── 中枢 ──
@@ -396,6 +444,29 @@ def _position_alert(results):
     return "", ""
 
 
+def _strong_fx_bs_star(results):
+    """三周期同时出现强分型+买卖点时标注⭐⭐
+
+    条件：1d/30m/5m 每个周期的未完成笔分型为"强"且存在买卖点（非"-"）
+    """
+    for label in ("1d", "30m", "5m"):
+        r = results.get(label)
+        if not r or "error" in r:
+            return ""
+    required = 0
+    for label in ("1d", "30m", "5m"):
+        ubi = results[label].get("ubi_info", "")
+        fx_ok = "强)" in ubi  # 分型强度为"强"，如"底分型(强)"
+        bs_ok = "买" in ubi or "卖" in ubi  # 存在买卖点
+        if fx_ok and bs_ok:
+            required += 1
+    if required >= 3:
+        return '<span style="color:orange">⭐⭐</span> '
+    if required >= 2:
+        return '<span style="color:orange">⭐</span> '
+    return ""
+
+
 def _ubi_star(results):
     """未完成笔方向星级标注：全向上 → ★★，日线向下+分钟向上 → ★"""
     daily = results.get("1d")
@@ -419,11 +490,13 @@ def _ubi_star(results):
 def format_md(symbol, results, name=None):
     """格式化单只股票为 Markdown 报告"""
     star = _ubi_star(results)
+    fx_star = _strong_fx_bs_star(results)
     label = f"{name}（{symbol}）" if name else symbol
     lines = []
 
-    if star:
-        lines.append(f"<h1>{star} {label} 缠论趋势预测</h1>")
+    markers = f"{star}{fx_star}".strip()
+    if markers:
+        lines.append(f"<h1>{markers} {label} 缠论趋势预测</h1>")
     else:
         lines.append(f"# {label} 缠论趋势预测")
     lines.append("")
@@ -499,23 +572,28 @@ def _merged_filename(symbols):
 
 
 def _sort_key(symbol, all_results, name_map):
-    """排序键：上证指数 > 创业板指 > 加仓提醒 > 偏多 > 多空均衡 > 偏空 > 其他"""
+    """排序键：上证指数 > 创业板指 > 强分型+买卖点共振 > 加仓提醒 > 偏多 > 多空均衡 > 偏空 > 其他"""
     name = (name_map or {}).get(symbol, "")
     signal = _overall_signal(all_results[symbol])
     alert, _ = _position_alert(all_results[symbol])
+    fx_star = _strong_fx_bs_star(all_results[symbol])
     if "上证指数" in name:
         return 0
     if "创业板指" in name:
         return 1
-    if alert and "加仓" in alert:
+    if "⭐⭐" in fx_star:
         return 2
-    if "偏多" in signal:
+    if alert and "加仓" in alert:
         return 3
-    if "多空均衡" in signal:
+    if "⭐" in fx_star:
         return 4
-    if "偏空" in signal:
+    if "偏多" in signal:
         return 5
-    return 6
+    if "多空均衡" in signal:
+        return 6
+    if "偏空" in signal:
+        return 7
+    return 8
 
 
 def _write_merged_report(symbols, all_results, filename, name_map=None):

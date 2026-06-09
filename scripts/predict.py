@@ -103,17 +103,19 @@ def _find_divergence(series, closes, lookback=80):
 
 
 def _fx_enhanced_power(fx):
-    """增强分型强度判定：在原始 power_str 基础上叠加影线和成交量因子
+    """增强分型强度判定：根据影线 + 成交量组合决定强度
 
-    顶分型：上影线占比越高 → 拒绝信号越强
-    底分型：下影线占比越高 → 支撑信号越强
-    成交量：中间K线量能相对前后K线放大 → 信号更可靠
+    规则：
+      底分型/买点 + 长下影线 + 明显放量 → 强（趋势转强）
+      顶分型/卖点 + 长上影线 + 明显放量 → 弱（趋势转弱）
+      影线满足但放量不明显 → 中
+      其他 → 保持 Rust 核心的原始强度
 
-    返回格式："强|长上影|放量" 或 "中" 等
+    返回格式："强|长下影|放量" 或 "中" 或 "弱" 等
     """
     power = fx.power_str  # 原始强度：强/中/弱
     is_ding = fx.mark.value == "顶分型"
-    tags = [power]
+    tags = []
 
     if len(fx.elements) < 3:
         return power
@@ -122,7 +124,6 @@ def _fx_enhanced_power(fx):
     prev = fx.elements[0]
     nxt = fx.elements[2]
 
-    body = abs(mid.close - mid.open)
     total_range = mid.high - mid.low
     if total_range <= 0:
         return power
@@ -133,20 +134,35 @@ def _fx_enhanced_power(fx):
     upper_pct = upper_shadow / total_range * 100
     lower_pct = lower_shadow / total_range * 100
 
+    has_long_shadow = False
     if is_ding and upper_pct >= 40:
         tags.append("长上影")
+        has_long_shadow = True
     elif not is_ding and lower_pct >= 40:
         tags.append("长下影")
+        has_long_shadow = True
 
     # ── 成交量因子 ──
-    # 中间K线量 vs 前后K线平均量
     avg_vol = (prev.vol + nxt.vol) / 2 if (prev.vol + nxt.vol) > 0 else 1
     vol_ratio = mid.vol / avg_vol if avg_vol > 0 else 1
-    if vol_ratio >= 1.5:
+    is_obvious_vol = vol_ratio >= 1.5
+
+    if is_obvious_vol:
         tags.append("放量")
     elif vol_ratio <= 0.6:
         tags.append("缩量")
 
+    # ── 强度判定：影线 + 放量组合 ──
+    if has_long_shadow:
+        if is_obvious_vol:
+            # 底分型+长下影+放量 → 强
+            # 顶分型+长上影+放量 → 强
+            power = "强"
+        else:
+            # 影线满足但放量不明显 → 中
+            power = "中"
+
+    tags.insert(0, power)
     return "|".join(tags) if len(tags) > 1 else power
 
 

@@ -7,8 +7,8 @@
   uv run python scripts/predict.py -n 4 600519.SH 999999.SH  # 指定并发数
 
 输出:
-  自选股模式 → output/czsc_zxg_yyyymmdd.md
-  手动模式   → output/czsc_<symbol>.md
+  自选股模式 → output/czsc-zxg-yyyymmdd.md
+  手动模式   → output/czsc-<symbol>.md
 """
 
 import argparse
@@ -26,6 +26,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars, prefetch_factors
 from czsc import CZSC, Freq, ZS
 import math
+import time
 
 import numpy as np
 import talib
@@ -563,8 +564,8 @@ def format_md(symbol, results, name=None):
 TDX_ZXG_PATH = Path("/home/li/.local/share/tdxcfv/drive_c/tc/T0002/blocknew/zxg.blk")
 
 
-def _parse_tdx_zxg(path):
-    """解析通达信自选股文件，返回 symbol 列表（如 600519.SH）
+def _parse_tdx_blk(path):
+    """解析通达信 blk 板块文件，返回 symbol 列表（如 600519.SH）
 
     文件格式：每行一个7位编码，首字符为市场码（1=上海, 0=深圳），后6位为股票代码。
     """
@@ -584,7 +585,7 @@ def _parse_tdx_zxg(path):
 def _merged_filename(symbols):
     """多个股票时合并为一个文件名"""
     parts = [s.replace(".", "_") for s in symbols]
-    return f"output/czsc_{'_'.join(parts)}.md"
+    return f"output/czsc-{'_'.join(parts)}.md"
 
 
 def _sort_key(symbol, all_results, name_map):
@@ -640,7 +641,7 @@ def main():
         symbols = args.symbols
         from_zxg = False
     elif TDX_ZXG_PATH.exists():
-        symbols = _parse_tdx_zxg(TDX_ZXG_PATH)
+        symbols = _parse_tdx_blk(TDX_ZXG_PATH)
         if not symbols:
             print(f"TDX自选股文件为空: {TDX_ZXG_PATH}")
             sys.exit(1)
@@ -659,7 +660,6 @@ def main():
     log_file = f"output/predict_{edt.replace('-', '')}.log"
     logger = _setup_logging(log_file)
 
-    import time
     t_start = time.time()
     print(f"数据范围: {sdt} ~ {edt}")
     print(f"待预测({len(symbols)}): {', '.join(symbols)}")
@@ -669,61 +669,65 @@ def main():
     # 批量获取股票名称
     print("获取股票名称...")
     devnull = open(os.devnull, "w")
-    name_map = _batch_stock_names(symbols, devnull)
-    for s in symbols:
-        logger.info(f"{s} → {name_map.get(s, s)}")
+    try:
+        name_map = _batch_stock_names(symbols, devnull)
+        for s in symbols:
+            logger.info(f"{s} → {name_map.get(s, s)}")
 
-    # 预取复权因子（缓存 1 天，后续 get_raw_bars 命中缓存跳过网络请求）
-    print(f"预取复权因子 ({len(symbols)}只)...")
-    prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
+        # 预取复权因子（缓存 1 天，后续 get_raw_bars 命中缓存跳过网络请求）
+        print(f"预取复权因子 ({len(symbols)}只)...")
+        prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
 
-    # 并行分析
-    all_results = {}
-    total = len(symbols)
+        # 并行分析
+        all_results = {}
+        total = len(symbols)
 
-    if total == 1:
-        symbol = symbols[0]
-        print(f"\n[1/1] {name_map.get(symbol, symbol)} ...")
-        all_results[symbol] = predict_stock(symbol, sdt, edt, logger=logger)
-    else:
-        workers = min(args.workers, total)
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(predict_stock, symbol, sdt, edt, "前复权", logger): symbol
-                for symbol in symbols
-            }
-            done_count = 0
-            for future in as_completed(futures):
-                symbol = futures[future]
-                done_count += 1
-                try:
-                    all_results[symbol] = future.result()
-                except Exception as e:
-                    logger.error(f"{symbol} 分析异常: {e}")
-                    all_results[symbol] = {label: {"error": str(e)} for label, _ in FREQS}
-                display = name_map.get(symbol, symbol)
-                print(f"  [{done_count}/{total}] {display} 完成")
+        if total == 1:
+            symbol = symbols[0]
+            print(f"\n[1/1] {name_map.get(symbol, symbol)} ...")
+            all_results[symbol] = predict_stock(symbol, sdt, edt, logger=logger)
+        else:
+            workers = min(args.workers, total)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(predict_stock, symbol, sdt, edt, "前复权", logger): symbol
+                    for symbol in symbols
+                }
+                done_count = 0
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    done_count += 1
+                    try:
+                        all_results[symbol] = future.result()
+                    except Exception as e:
+                        logger.error(f"{symbol} 分析异常: {e}")
+                        all_results[symbol] = {label: {"error": str(e)} for label, _ in FREQS}
+                    display = name_map.get(symbol, symbol)
+                    print(f"  [{done_count}/{total}] {display} 完成")
 
-    # 确定输出文件名
-    if from_zxg:
-        filename = f"output/czsc_zxg_{edt.replace('-', '')}.md"
-    elif len(symbols) == 1:
-        filename = f"output/czsc_{symbols[0].replace('.', '_')}.md"
-    else:
-        filename = _merged_filename(symbols)
+        # ── 盘面分析 ──
+        # 确定输出文件名
+        if from_zxg:
+            filename = f"output/czsc-zxg-{edt.replace('-', '')}.md"
+        elif len(symbols) == 1:
+            filename = f"output/czsc-{symbols[0].replace('.', '_')}.md"
+        else:
+            filename = _merged_filename(symbols)
 
-    # 生成报告
-    if len(symbols) == 1 and not from_zxg:
-        md = format_md(symbols[0], all_results[symbols[0]], name=name_map.get(symbols[0]))
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(md)
-    else:
-        _write_merged_report(symbols, all_results, filename, name_map=name_map)
+        # 生成报告
+        if len(symbols) == 1 and not from_zxg:
+            md = format_md(symbols[0], all_results[symbols[0]], name=name_map.get(symbols[0]))
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(md)
+        else:
+            _write_merged_report(symbols, all_results, filename, name_map=name_map)
 
-    print(f"\n  → {filename}")
-    print(f"  → {log_file}")
-    elapsed = time.time() - t_start
-    print(f"完成，共生成 1 份报告，耗时 {elapsed:.1f} 秒")
+        print(f"\n  → {filename}")
+        print(f"  → {log_file}")
+    finally:
+        devnull.close()
+        elapsed = time.time() - t_start
+        print(f"完成，耗时 {elapsed:.1f} 秒")
 
 
 if __name__ == "__main__":

@@ -674,7 +674,8 @@ def main():
         for s in symbols:
             logger.info(f"{s} → {name_map.get(s, s)}")
 
-        # 预取复权因子（缓存 1 天，后续 get_raw_bars 命中缓存跳过网络请求）
+        # 预取复权因子（缓存 1 个月；网络获取不到最新因子时用过期缓存兜底，
+        # 后续 get_raw_bars 命中缓存跳过网络请求）
         print(f"预取复权因子 ({len(symbols)}只)...")
         prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
 

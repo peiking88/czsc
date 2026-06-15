@@ -7,6 +7,16 @@
 
 ---
 
+## [1.7.7] — 2026-06-15
+
+### Fixed
+
+- **`czsc/connectors/tdx_connector.py`**: 复权因子网络获取失败 / 返回空时，新增过期缓存兜底机制，避免数据退化为未复权（价格错误导致后续缠论结构失真）。`_load_factor_cache` 新增 `allow_expired` 参数；`_apply_adjust` 与 `prefetch_factors` 在网络失败时用过期缓存兜底。设计权衡：过期缓存总比未复权更接近真实价格。
+- **复权因子缓存有效期 24h → 30 天**：复权因子仅在除权除息事件发生时变化，1 个月内变动极少，放宽缓存期以减少网络请求。
+- **`tests/test_tdx_connector.py`**: 新增 `TestFactorCacheTTL` / `TestApplyAdjustFallback` / `TestPrefetchFactorsFallback` 三组测试，覆盖 TTL 与兜底逻辑。
+
+---
+
 ## [1.0.0-rc.5] — 2026-05-18
 
 > **1.0.0-rc.4 的紧急重发**。rc.4 wheel build + smoke 全部 6 平台都成功，但 `publish-to-pypi` step 的 `Verify version consistency` 检查写错了：把 Cargo `1.0.0-rc.4` (SemVer) 与 wheel filename `1.0.0rc4` (PEP 440) 直接字符串对比——maturin 必然要把 SemVer 的 `-rc.N` 翻译成 PEP 440 的 `rcN`，所以这个检查在任何 prerelease tag 上都会必然失败。

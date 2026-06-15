@@ -10,12 +10,29 @@ test_tdx_connector.py - TDX 连接器单元测试
 - 边界处理
 """
 
+import os
+import time
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 from czsc import Freq, RawBar
 from czsc.connectors import tdx_connector as tc
+
+
+# ---------------------------------------------------------------------------
+# 辅助：构造模拟的复权因子 DataFrame（与 _save_factor_cache / _apply_factor 约定一致）
+# ---------------------------------------------------------------------------
+
+
+def _make_factor_df(code: str = "600519") -> pd.DataFrame:
+    """生成模拟复权因子，date 为索引、含 factor 列
+
+    构造早期 factor=2.0、近期 factor=1.0 的前复权因子，便于在测试中
+    通过价格是否被放大来区分「已复权」与「未复权」。
+    """
+    dates = pd.to_datetime(["2024-01-01", "2024-06-03"])
+    return pd.DataFrame({"date": dates, "factor": [2.0, 1.0]}).set_index("date")
 
 
 # ---------------------------------------------------------------------------
@@ -26,16 +43,18 @@ from czsc.connectors import tdx_connector as tc
 def _make_local_df(rows: int = 10, code: str = "000001") -> pd.DataFrame:
     """生成模拟本地读取输出的 DataFrame"""
     dates = pd.date_range("2024-01-01", periods=rows, freq="B")
-    return pd.DataFrame({
-        "stock_code": code,
-        "date": dates,
-        "open": [10.0 + i * 0.1 for i in range(rows)],
-        "high": [10.5 + i * 0.1 for i in range(rows)],
-        "low": [9.5 + i * 0.1 for i in range(rows)],
-        "close": [10.0 + i * 0.1 for i in range(rows)],
-        "volume": [1000 + i * 100 for i in range(rows)],
-        "amount": [10000.0 + i * 1000 for i in range(rows)],
-    })
+    return pd.DataFrame(
+        {
+            "stock_code": code,
+            "date": dates,
+            "open": [10.0 + i * 0.1 for i in range(rows)],
+            "high": [10.5 + i * 0.1 for i in range(rows)],
+            "low": [9.5 + i * 0.1 for i in range(rows)],
+            "close": [10.0 + i * 0.1 for i in range(rows)],
+            "volume": [1000 + i * 100 for i in range(rows)],
+            "amount": [10000.0 + i * 1000 for i in range(rows)],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +372,7 @@ class TestCacheOps:
     def test_save_and_load_roundtrip(self, tmp_path):
         # 临时覆盖缓存目录
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_cache")
@@ -368,6 +388,7 @@ class TestCacheOps:
 
     def test_load_cache_missing(self, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "nonexistent")
@@ -378,6 +399,7 @@ class TestCacheOps:
 
     def test_save_cache_dedup(self, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_cache_dedup")
@@ -399,6 +421,7 @@ class TestSyncBars:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_bars_no_adjust(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_sync")
@@ -418,6 +441,7 @@ class TestSyncBars:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_bars_empty_returns_empty_dict(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_empty")
@@ -430,6 +454,7 @@ class TestSyncBars:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_bars_incremental(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_incr")
@@ -452,6 +477,7 @@ class TestSyncBars:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_bars_force_full(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_force")
@@ -470,6 +496,7 @@ class TestSyncAll:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_all_with_given_list(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_syncall")
@@ -483,6 +510,7 @@ class TestSyncAll:
     @patch("czsc.connectors.tdx_connector._read_local")
     def test_sync_all_handles_empty(self, mock_read, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_syncall_empty")
@@ -502,6 +530,7 @@ class TestGetRawBarsWithCache:
     def test_cache_hit_returns_fast(self, tmp_path):
         """缓存命中时不调用 _read_local"""
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_gbr_cache")
@@ -519,6 +548,7 @@ class TestGetRawBarsWithCache:
 
     def test_cache_hit_returns_dataframe(self, tmp_path):
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_gbr_cache_df")
@@ -526,8 +556,7 @@ class TestGetRawBarsWithCache:
             df = tc._to_czsc_columns(df, "600519")
             tc._save_cache(df, "600519", "5分钟")
 
-            result = tc.get_raw_bars("600519", "5分钟", "2024-01-01", "2024-12-31",
-                                     fq="不复权", raw_bar=False)
+            result = tc.get_raw_bars("600519", "5分钟", "2024-01-01", "2024-12-31", fq="不复权", raw_bar=False)
             assert isinstance(result, pd.DataFrame)
             assert len(result) == 8
         finally:
@@ -537,6 +566,7 @@ class TestGetRawBarsWithCache:
     def test_cache_miss_falls_back_to_tdx(self, mock_read, tmp_path):
         """缓存放了不同 symbol，当前 symbol 缓存缺失 → fallback 到 _read_local"""
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_gbr_miss")
@@ -550,6 +580,7 @@ class TestGetRawBarsWithCache:
     def test_cache_bypassed_with_use_cache_false(self, tmp_path):
         """use_cache=False 时跳过缓存直接读 TDX"""
         import czsc.connectors.tdx_connector as tcm
+
         orig_dir = tcm.CACHE_DIR
         try:
             tcm.CACHE_DIR = str(tmp_path / "test_gbr_nocache")
@@ -563,11 +594,198 @@ class TestGetRawBarsWithCache:
             mock_read.return_value = _make_local_df(7)
 
             try:
-                bars = tc.get_raw_bars("600519", "日线", "2024-01-01", "2024-12-31",
-                                       fq="不复权", use_cache=False)
+                bars = tc.get_raw_bars("600519", "日线", "2024-01-01", "2024-12-31", fq="不复权", use_cache=False)
                 mock_read.assert_called_once()
                 assert len(bars) == 7
             finally:
                 patcher.stop()
         finally:
             tcm.CACHE_DIR = orig_dir
+
+
+# ---------------------------------------------------------------------------
+# 测试：复权因子缓存期 + 过期缓存兜底
+# ---------------------------------------------------------------------------
+
+
+class TestFactorCacheTTL:
+    def test_ttl_is_one_month(self):
+        """复权因子缓存有效期默认为 30 天（1 个月）"""
+        assert tc._FACTOR_CACHE_TTL_HOURS == 24 * 30
+
+    def test_load_factor_cache_hit_within_ttl(self, tmp_path):
+        """TTL 内的缓存可正常读取"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+            loaded = tc._load_factor_cache("600519", "qfq")
+            assert loaded is not None
+            assert not loaded.empty
+            assert "factor" in loaded.columns
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    def test_load_factor_cache_expired_returns_none(self, tmp_path):
+        """缓存文件 mtime 超过 TTL 时默认返回 None"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+            cache_path = os.path.join(tcm.FACTOR_CACHE_DIR, "600519_qfq.parquet")
+            # 把 mtime 改到 31 天前，使其按 30 天 TTL 判定为过期
+            old_ts = time.time() - 31 * 24 * 3600
+            os.utime(cache_path, (old_ts, old_ts))
+            assert tc._load_factor_cache("600519", "qfq", max_age_hours=24 * 30) is None
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    def test_load_factor_cache_allow_expired(self, tmp_path):
+        """allow_expired=True 时即使过期也返回缓存（供兜底使用）"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+            cache_path = os.path.join(tcm.FACTOR_CACHE_DIR, "600519_qfq.parquet")
+            old_ts = time.time() - 31 * 24 * 3600
+            os.utime(cache_path, (old_ts, old_ts))
+            # 已过期（默认 max_age 会判 None），但允许过期 → 仍返回缓存
+            assert tc._load_factor_cache("600519", "qfq") is None
+            loaded = tc._load_factor_cache("600519", "qfq", allow_expired=True)
+            assert loaded is not None
+            assert not loaded.empty
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    def test_load_factor_cache_missing(self, tmp_path):
+        """无缓存文件返回 None"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            assert tc._load_factor_cache("600519", "qfq") is None
+            assert tc._load_factor_cache("600519", "qfq", allow_expired=True) is None
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+
+class TestApplyAdjustFallback:
+    """网络获取失败时用过期缓存兜底，避免退化为未复权"""
+
+    @patch("mootdx.quotes.Quotes")
+    def test_expired_cache_plus_network_failure_uses_fallback(self, mock_quotes_cls, tmp_path):
+        """缓存过期 + 网络失败 → 用过期缓存兜底，结果为已复权（非原始价）"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            # 写入一份"过期"缓存：max_age=0 即过期
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+
+            raw = _make_local_df(5, code="600519")
+            raw_close = float(raw["close"].iloc[0])
+
+            # 网络层：Quotes.factory 返回 mock；fetch_factor 抛异常模拟获取失败
+            mock_quotes_cls.factory.return_value = mock_quotes_cls.return_value
+            with patch("tdxdata.sources.adjust.fetch_factor", side_effect=RuntimeError("network down")):
+                # force_refresh=True 才会跳过 TTL 缓存、强制走网络→失败→兜底
+                result = tc._apply_adjust(raw, "600519", "front", force_refresh=True)
+
+            # 兜底命中过期缓存：早期日期 close 应被 factor=2.0 放大（qfq 以最新 factor 归一，
+            # 此处 _make_factor_df 最新=1.0、早期=2.0），不等于原始价
+            assert result["close"].iloc[0] != pytest.approx(raw_close)
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    @patch("mootdx.quotes.Quotes")
+    def test_no_cache_plus_network_failure_falls_back_unadjusted(self, mock_quotes_cls, tmp_path):
+        """无任何缓存 + 网络失败 → 退化为未复权（原值返回）"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            raw = _make_local_df(5, code="600519")
+
+            mock_quotes_cls.factory.return_value = mock_quotes_cls.return_value
+            with patch("tdxdata.sources.adjust.fetch_factor", side_effect=RuntimeError("network down")):
+                result = tc._apply_adjust(raw, "600519", "front", force_refresh=True)
+
+            # 无缓存可兜底，返回未复权原值
+            pd.testing.assert_frame_equal(result.reset_index(drop=True), raw.reset_index(drop=True))
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    @patch("mootdx.quotes.Quotes")
+    def test_expired_cache_plus_empty_network_result_uses_fallback(self, mock_quotes_cls, tmp_path):
+        """缓存过期 + 网络返回空 DataFrame → 用过期缓存兜底"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+            raw = _make_local_df(5, code="600519")
+            raw_close = float(raw["close"].iloc[0])
+
+            mock_quotes_cls.factory.return_value = mock_quotes_cls.return_value
+            empty = pd.DataFrame(columns=["factor"])
+            with patch("tdxdata.sources.adjust.fetch_factor", return_value=empty):
+                result = tc._apply_adjust(raw, "600519", "front", force_refresh=True)
+
+            assert result["close"].iloc[0] != pytest.approx(raw_close)
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+
+class TestPrefetchFactorsFallback:
+    def test_network_failure_with_expired_cache_succeeds(self, tmp_path):
+        """预取时网络失败，但有过期缓存兜底 → 返回成功"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            # 写入缓存，并让其强制过期以触发网络路径
+            tc._save_factor_cache("600519", "qfq", _make_factor_df())
+            cache_path = os.path.join(tcm.FACTOR_CACHE_DIR, "600519_qfq.parquet")
+            # 把 mtime 改到 31 天前，使其按 30 天 TTL 判定为过期
+            old_ts = time.time() - 31 * 24 * 3600
+            os.utime(cache_path, (old_ts, old_ts))
+
+            with (
+                patch("mootdx.quotes.Quotes") as mock_quotes_cls,
+                patch("tdxdata.sources.adjust.fetch_factor", side_effect=RuntimeError("network down")),
+            ):
+                mock_quotes_cls.factory.return_value = mock_quotes_cls.return_value
+                results = tc.prefetch_factors(["600519.SH"], dividend_type="前复权", max_workers=1)
+
+            assert results.get("600519.SH") is True
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir
+
+    def test_network_failure_without_cache_fails(self, tmp_path):
+        """预取时网络失败且无任何缓存 → 返回失败"""
+        import czsc.connectors.tdx_connector as tcm
+
+        orig_dir = tcm.FACTOR_CACHE_DIR
+        try:
+            tcm.FACTOR_CACHE_DIR = str(tmp_path / "factors")
+            with (
+                patch("mootdx.quotes.Quotes") as mock_quotes_cls,
+                patch("tdxdata.sources.adjust.fetch_factor", side_effect=RuntimeError("network down")),
+            ):
+                mock_quotes_cls.factory.return_value = mock_quotes_cls.return_value
+                results = tc.prefetch_factors(["600519.SH"], dividend_type="前复权", max_workers=1)
+
+            assert results.get("600519.SH") is False
+        finally:
+            tcm.FACTOR_CACHE_DIR = orig_dir

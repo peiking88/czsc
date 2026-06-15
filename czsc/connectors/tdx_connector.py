@@ -76,8 +76,16 @@ CZSC_COLUMNS = ["symbol", "dt", "open", "close", "high", "low", "vol", "amount"]
 SYMBOL_GROUPS = {
     "check": ["000001", "600519", "000858"],
     "index": [
-        "000001", "399001", "399006", "000300", "000905", "000852",
-        "399673", "399681", "399106", "399005",
+        "000001",
+        "399001",
+        "399006",
+        "000300",
+        "000905",
+        "000852",
+        "399673",
+        "399681",
+        "399106",
+        "399005",
     ],
 }
 
@@ -148,8 +156,7 @@ def _get_market(symbol: str) -> str:
     """从 czsc 风格标的代码中提取 TDX 市场代码"""
     symbol_lower = symbol.lower()
     # 后缀：600519.sh / 000858.sz
-    for suffix, market in ((".sh", "sh"), (".sz", "sz"), (".bj", "bj"),
-                           (".xshg", "sh"), (".xshe", "sz")):
+    for suffix, market in ((".sh", "sh"), (".sz", "sz"), (".bj", "bj"), (".xshg", "sh"), (".xshe", "sz")):
         if symbol_lower.endswith(suffix):
             return market
     # 前缀：sh600519 / sz000858 / bj.899050（无点）
@@ -264,7 +271,15 @@ def _apply_adjust(df: pd.DataFrame, code: str, dividend_type: str, force_refresh
                     _save_factor_cache(code, adjust, factor_df)
             except Exception as e:
                 logger.warning(f"复权因子获取失败 {code}: {e}")
-                return df
+                factor_df = None
+
+            # 网络获取失败或返回空：用过期缓存兜底，避免退化为未复权数据
+            # （过期缓存总比未复权更接近真实价格，force_refresh 场景同理）
+            if factor_df is None or factor_df.empty:
+                fallback = _load_factor_cache(code, adjust, allow_expired=True)
+                if fallback is not None and not fallback.empty:
+                    logger.warning(f"使用过期复权因子缓存兜底 {code}")
+                    factor_df = fallback
 
         if factor_df is not None and not factor_df.empty:
             return _apply_factor(df, factor_df, adjust)
@@ -385,6 +400,7 @@ def _fetch_realtime_kline(code: str, period: str, count: int, dividend_type: str
     if period in ("1d", "1w", "1mon"):
         # 日线及以上：使用 bars()（已验证可用）
         from tdxdata.api import TdxData
+
         tdx = TdxData()
         df = tdx.fetch_kline(stock_code=code, period=period, count=count)
         tdx.close()
@@ -437,9 +453,7 @@ def _build_kline_from_ticks(code: str, period: str, today: pd.Timestamp) -> pd.D
 
     # 构造完整 datetime：当日日期 + HH:MM
     ticks = ticks.copy()
-    ticks["date"] = ticks["time"].apply(
-        lambda t: pd.Timestamp(f"{today.strftime('%Y-%m-%d')} {t}:00")
-    )
+    ticks["date"] = ticks["time"].apply(lambda t: pd.Timestamp(f"{today.strftime('%Y-%m-%d')} {t}:00"))
 
     # transaction() 的 volume 单位是手（100股），转换为股以匹配历史数据
     ticks["volume"] = ticks["volume"] * 100
@@ -449,14 +463,18 @@ def _build_kline_from_ticks(code: str, period: str, today: pd.Timestamp) -> pd.D
     # 集合竞价（09:25-09:29）归入上午第一根K线，与历史数据一致
     ticks["bucket"] = ticks["date"].apply(lambda dt: bar_end_time_ashare(dt, minutes))
 
-    agg = ticks.groupby("bucket", sort=True).agg(
-        open=("price", "first"),
-        close=("price", "last"),
-        high=("price", "max"),
-        low=("price", "min"),
-        volume=("volume", "sum"),
-        amount=("amount", "sum"),
-    ).reset_index()
+    agg = (
+        ticks.groupby("bucket", sort=True)
+        .agg(
+            open=("price", "first"),
+            close=("price", "last"),
+            high=("price", "max"),
+            low=("price", "min"),
+            volume=("volume", "sum"),
+            amount=("amount", "sum"),
+        )
+        .reset_index()
+    )
     agg.rename(columns={"bucket": "date"}, inplace=True)
     agg["stock_code"] = code
 
@@ -596,7 +614,7 @@ def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_w
 
     def _fetch_one(code):
         code = _normalize_symbol(code)
-        # 先检查缓存，避免重复请求
+        # 先检查缓存（TTL 内有效），避免重复请求
         cached = _load_factor_cache(code, adjust)
         if cached is not None and not cached.empty:
             logger.debug(f"因子缓存命中: {code}")
@@ -607,9 +625,20 @@ def prefetch_factors(symbols: list[str], dividend_type: str = "前复权", max_w
             if factor_df is not None and not factor_df.empty:
                 _save_factor_cache(code, adjust, factor_df)
                 logger.info(f"因子已缓存: {code} ({len(factor_df)} 条)")
-            return code, True
+                return code, True
+            # 网络返回空：用过期缓存兜底
+            fallback = _load_factor_cache(code, adjust, allow_expired=True)
+            if fallback is not None and not fallback.empty:
+                logger.warning(f"因子预取网络空结果，使用过期缓存兜底: {code}")
+                return code, True
+            return code, False
         except Exception as e:
             logger.warning(f"因子预取失败 {code}: {e}")
+            # 网络失败：用过期缓存兜底，避免后续分析退化为未复权数据
+            fallback = _load_factor_cache(code, adjust, allow_expired=True)
+            if fallback is not None and not fallback.empty:
+                logger.warning(f"因子预取网络失败，使用过期缓存兜底: {code}")
+                return code, True
             return code, False
         finally:
             try:
@@ -705,20 +734,29 @@ def _save_cache(df: pd.DataFrame, symbol: str, freq_val: str) -> None:
 
 
 # 复权因子缓存有效期（小时），超过后视为过期，重新从网络获取
-_FACTOR_CACHE_TTL_HOURS = 24
+# 默认 30 天：复权因子仅在除权除息事件发生时才变化，1 个月内变动极少，
+# 故放宽缓存期以减少网络请求；网络获取不到最新因子时还会用过期缓存兜底
+_FACTOR_CACHE_TTL_HOURS = 24 * 30
 
 
-def _load_factor_cache(code: str, adjust: str, max_age_hours: int = _FACTOR_CACHE_TTL_HOURS) -> pd.DataFrame | None:
+def _load_factor_cache(
+    code: str,
+    adjust: str,
+    max_age_hours: int = _FACTOR_CACHE_TTL_HOURS,
+    allow_expired: bool = False,
+) -> pd.DataFrame | None:
     """读取缓存的复权因子，无缓存或已过期返回 None
 
     :param code: 股票代码
     :param adjust: 复权类型
-    :param max_age_hours: 缓存最大有效小时数，默认 24 小时
+    :param max_age_hours: 缓存最大有效小时数，默认 30 天
+    :param allow_expired: True 时跳过过期检查，即使过期也返回缓存。
+        用于网络获取最新因子失败时的兜底，避免退化为未复权数据
     """
     path = os.path.join(FACTOR_CACHE_DIR, f"{code}_{adjust}.parquet")
     if not os.path.exists(path):
         return None
-    if max_age_hours > 0:
+    if not allow_expired and max_age_hours > 0:
         mtime = os.path.getmtime(path)
         age_seconds = _time.time() - mtime
         if age_seconds > max_age_hours * 3600:
@@ -880,8 +918,10 @@ def sync_bars(
             _save_cache(df, symbol, freq_val)
             result[freq_val] = df
             state.update_sync(sync_key)
-            logger.info(f"  {symbol} {freq_val}: {len(df)} 条, "
-                        f"{df['dt'].min().strftime('%Y-%m-%d')} ~ {df['dt'].max().strftime('%Y-%m-%d')}")
+            logger.info(
+                f"  {symbol} {freq_val}: {len(df)} 条, "
+                f"{df['dt'].min().strftime('%Y-%m-%d')} ~ {df['dt'].max().strftime('%Y-%m-%d')}"
+            )
         except Exception as e:
             logger.error(f"  {symbol} {freq_val} 同步失败: {e}")
             continue
@@ -937,13 +977,13 @@ def sync_all(
 
     all_results: dict[str, dict[str, pd.DataFrame]] = {}
     for i, symbol in enumerate(symbols):
-        logger.info(f"[{i+1}/{len(symbols)}] 处理 {symbol} ...")
+        logger.info(f"[{i + 1}/{len(symbols)}] 处理 {symbol} ...")
         try:
             result = sync_bars(symbol, tdxdir, fq, force_full)
             if result:
                 all_results[symbol] = result
         except Exception as e:
-            logger.error(f"[{i+1}/{len(symbols)}] {symbol} 同步异常: {e}")
+            logger.error(f"[{i + 1}/{len(symbols)}] {symbol} 同步异常: {e}")
             continue
 
     logger.info(f"批量同步完成: {len(all_results)}/{len(symbols)} 个标的有数据")

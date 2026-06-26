@@ -21,13 +21,6 @@ import sys
 from collections import OrderedDict
 from datetime import date
 
-# ── 盘面分析资讯源 ──
-# 头条博主（衡山佛曰论股）— 用户主页，无需每日更新
-TOUTIAO_USER_URL = "https://www.toutiao.com/c/user/token/MS4wLjABAAAAI86oR8kKzMvj-6geoYfW2ovdpuUUZzDDaxScGnivmtA/"
-TOUTIAO_AUTHOR = "衡山佛曰论股"
-# 头条文章 ID 缓存文件（由 web_reader 或手动维护）
-TOUTIAO_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output", ".toutiao_latest.json")
-
 # ── 盘面分析资讯渠道 ──
 # 优先从主流财经网站直接抓取最新资讯页面（不依赖搜索引擎）。
 # 注：财联社、雪球等站点为纯 JS 渲染，requests 无法获取实质内容，暂不纳入。
@@ -61,6 +54,7 @@ MARKET_ANALYST_CHANNELS = [
     {"name": "高盛",     "query": "高盛 A股 最新观点 {month}"},
     {"name": "大摩",     "query": "摩根士丹利 A股 最新策略 {month}"},
     {"name": "中信证券", "query": "中信证券 A股 投资策略 {month}"},
+    {"name": "广发郭磊", "query": "郭磊 A股 最新观点 {month}"},
 ]
 
 # 搜索结果域名白名单（优先匹配的取前 2 条，兜底取任意域名前 2 条）
@@ -80,63 +74,6 @@ def _is_finance_domain(url: str) -> bool:
     from urllib.parse import urlparse
     host = urlparse(url).hostname or ""
     return any(host == d or host.endswith("." + d) for d in _FINANCE_DOMAINS)
-
-
-def _fetch_toutiao_content(url: str, timeout: int = 15) -> str:
-    """通过头条移动端 API 获取微头条/文章内容。
-
-    头条页面为纯 CSR（client-side rendering），requests 无法直接抓取。
-    使用 m.toutiao.com/i{item_id}/info/ API 可获取 JSON 格式正文。
-
-    返回: 纯文本内容（截取前 2000 字符），失败时返回 [获取失败: ...]
-    """
-    import requests as _req
-
-    # 从 URL 提取 item_id: /w/1234567890/ 或 /article/1234567890/
-    m = re.search(r"/(?:w|article)/(\d+)", url)
-    if not m:
-        return _fetch_url_text(url, timeout)  # 非标准 URL，回退到普通抓取
-
-    item_id = m.group(1)
-    api_url = f"https://m.toutiao.com/i{item_id}/info/"
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Referer": "https://www.toutiao.com/",
-        "Cookie": "ttwid=1",
-    }
-    try:
-        resp = _req.get(api_url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-
-        thread = data.get("data", {}).get("thread", {})
-        base = thread.get("thread_base", {})
-        content = base.get("content", "")
-
-        if not content:
-            return "[获取失败: 头条API返回空内容]"
-
-        # 提取作者名称: thread_base.user.info.name
-        user_info = base.get("user", {}).get("info", {})
-        author = user_info.get("name", "")
-
-        # 提取发布日期: create_time 为 Unix 时间戳
-        create_ts = base.get("create_time", 0)
-        from datetime import datetime as _dt
-        date_str = _dt.fromtimestamp(create_ts).strftime("%Y-%m-%d") if create_ts else ""
-
-        result = f"【{author}】\n" if author else ""
-        if date_str:
-            result += f"日期: {date_str}\n"
-        result += content[:2000]
-        return result
-    except Exception as e:
-        return f"[获取失败: {e}]"
 
 
 def _fetch_url_text(url: str, timeout: int = 30) -> str:
@@ -339,71 +276,6 @@ def _bing_search(query: str, max_results: int = 3, timeout: int = 15) -> list[di
     return results
 
 
-def _load_toutiao_cache() -> str:
-    """从缓存文件加载头条博主最新内容。
-
-    缓存文件 ``output/.toutiao_latest.json`` 由 Claude Code 通过 web_reader
-    定期更新，或由用户手动维护。格式::
-
-        {"content": "博主最新微头条正文...", "updated": "2026-06-12T08:30:00"}
-    """
-    import json as _json
-
-    if not os.path.exists(TOUTIAO_CACHE_FILE):
-        return ""
-
-    try:
-        with open(TOUTIAO_CACHE_FILE, "r", encoding="utf-8") as f:
-            cache = _json.load(f)
-        content = cache.get("content", "")
-        if content:
-            updated = cache.get("updated", "")
-            print(f"    头条缓存 (更新于 {updated})")
-            return content[:2000]
-    except Exception:
-        pass
-    return ""
-
-
-def _fetch_toutiao_latest_item_ids(author: str, max_ids: int = 5, timeout: int = 15) -> list[str]:
-    """通过 Bing 搜索获取头条博主最新文章 item_id 列表。
-
-    搜索 ``"作者名" site:toutiao.com``，从结果中提取 /w/ 和 /article/ 的 ID，
-    去重保序后返回。作为缓存文件的回退方案。
-    """
-    import requests as _req
-    from urllib.parse import quote_plus
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    }
-    query = f'"{author}" site:toutiao.com'
-    url = f"https://www.bing.com/search?q={quote_plus(query)}&setlang=zh-CN"
-    try:
-        resp = _req.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        raw_ids = re.findall(r"toutiao\.com/(?:w|article)/(\d{10,})", resp.text)
-        # 去重保序
-        seen: set[str] = set()
-        unique: list[str] = []
-        for i in raw_ids:
-            if i not in seen:
-                seen.add(i)
-                unique.append(i)
-        if unique:
-            print(f"    Bing 搜索: {unique[:3]}")
-        return unique[:max_ids]
-    except Exception as e:
-        print(f"    [Bing 搜索失败: {e}]")
-
-    return []
-
-
 def _generate_market_analysis(news_contents: list[str]) -> str:
     """调用 DeepSeek Anthropic 兼容 API 生成盘面分析
 
@@ -478,34 +350,9 @@ def _fetch_market_analysis() -> str:
         print("  ✓ 盘面分析（缓存）")
         return _market_analysis_cache
 
-    # ── 第一阶段：头条博主观点（实时搜索优先 → 缓存兜底） ──
+    # ── 第一阶段：财经网站资讯 ──
     print("获取盘面资讯...")
-    contents = []  # list[dict]: {source, date, text}
-    if TOUTIAO_USER_URL:
-        print(f"  获取头条: {TOUTIAO_AUTHOR}")
-        toutiao_text = ""
-        # 优先：Bing 搜索 → m.toutiao.com API（实时获取最新内容）
-        item_ids = _fetch_toutiao_latest_item_ids(TOUTIAO_AUTHOR)
-        for item_id in item_ids:
-            toutiao_url = f"https://www.toutiao.com/w/{item_id}/"
-            text = _fetch_toutiao_content(toutiao_url)
-            if text and not text.startswith("[获取失败"):
-                toutiao_text = text
-                print(f"    ✓ API 获取成功: {toutiao_url}")
-                break
-        # 兜底：磁盘缓存（仅搜索失败时使用）
-        if not toutiao_text:
-            toutiao_text = _load_toutiao_cache()
-            if toutiao_text:
-                print(f"    ✓ 使用磁盘缓存（实时搜索失败）")
-        if toutiao_text:
-            d = _extract_date(toutiao_text)
-            contents.append({"source": TOUTIAO_AUTHOR, "date": d, "text": toutiao_text})
-            print(f"    ✓ 头条内容获取成功")
-        else:
-            print(f"    - 头条内容获取失败（搜索和缓存均无结果）")
-
-    # ── 第二阶段：财经网站资讯 ──
+    contents = []  # list[dict]: {source, date, title, text}
     for ch in MARKET_NEWS_CHANNELS:
         fetched = 0
         for page_url in ch.get("urls", []):
@@ -525,7 +372,7 @@ def _fetch_market_analysis() -> str:
         else:
             print(f"    - {ch['name']}: 获取失败")
 
-    # ── 第三阶段：分析师观点（Bing 搜索 + 域名过滤） ──
+    # ── 第二阶段：分析师观点（Bing 搜索 + 域名过滤） ──
     today = date.today()
     month_str = f"{today.year}年{today.month}月"
     for ch in MARKET_ANALYST_CHANNELS:

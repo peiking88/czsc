@@ -502,6 +502,7 @@ dependencies = [
     { name = "scipy" },
     { name = "statsmodels" },
     { name = "ta-lib" },
+    { name = "taos-ws-py" },
     { name = "tdxdata" },
     { name = "tenacity" },
     { name = "tqdm" },
@@ -568,6 +569,7 @@ requires-dist = [
     { name = "statsmodels" },
     { name = "ta-lib" },
     { name = "talib-rs", marker = "(python_full_version == '3.12.*' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'test') or (python_full_version == '3.12.*' and sys_platform == 'win32' and extra == 'test')" },
+    { name = "taos-ws-py", specifier = ">=0.6.9" },
     { name = "tdxdata", editable = "/home/li/peiking88/tdxdata" },
     { name = "tenacity" },
     { name = "tqdm", specifier = ">=4.66.4" },
@@ -2656,6 +2658,20 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/c9/987155b8c632edc773b0957fe898067cd7f1733904a6396c177153a307e9/talib_rs-0.1.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:afa3e6704db776338c82eed4f2b799f7729da3acf104cbe17bb3e58705e6b016", size = 418950, upload-time = "2026-03-23T15:13:16.97Z" },
     { url = "https://files.pythonhosted.org/packages/62/04/50e64b1297bd61a8fb837451330adbdea3c767bc74103cd8290cbda211b2/talib_rs-0.1.2-cp312-cp312-win_amd64.whl", hash = "sha256:b7f009730eb940fd1cf80e92520cbc93baaa668f4aefa8d8f7baf3cf2954727b", size = 485433, upload-time = "2026-03-23T15:13:18.908Z" },
+]
+
+[[package]]
+name = "taos-ws-py"
+version = "0.6.9"
+source = { registry = "https://pypi.python.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/fe/56cbd1ca6951e82adfc4e3acec62b92a4c7ed38bd8b4f510b89ac49860b3/taos_ws_py-0.6.9-cp37-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:8b91c5f3b01aa68d841ea0d42afa6c9c9b1260505fe80a0070fbfad8578a0455", size = 8100522, upload-time = "2026-04-23T10:00:14.523Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/95/c68cdca3cd31197c9fd2dafb5330ead18ddabdb42c38228cf2bef70e2cd1/taos_ws_py-0.6.9-cp37-abi3-macosx_10_12_x86_64.whl", hash = "sha256:1d700a5fc9a60efead6a23f2685cd651539c51864195bc3f8b441ce94ff4cb52", size = 4136040, upload-time = "2026-04-23T10:00:16.735Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/fb/0b8738f6818721769469848f6548d0f727d6fe7ef361ab534230eef09f81/taos_ws_py-0.6.9-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:244ebb055dc22900fe93ef8bc9f0985dc2bbd33e8aae9eb7f827e2de133496d6", size = 4313756, upload-time = "2026-04-23T10:00:18.74Z" },
+    { url = "https://files.pythonhosted.org/packages/21/11/80273b8eb0845a1992b923b645706fa2a674cfe1914a20756645f5b89c12/taos_ws_py-0.6.9-cp37-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:614dc810a21b9eda4b3d37a960ce900b0c97fd7e9b7fa8e549dccca21ea5e35e", size = 4036618, upload-time = "2026-04-23T10:00:20.972Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/24/5d70ee3ddc84e0081111fe59b91bef62c948d1939919b2f5fbbfeb51f658/taos_ws_py-0.6.9-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:992e8fc0256b88e4f01a11dd52f9c9f9d4fd916f9bf9ebad2db59d610ed0312d", size = 4498027, upload-time = "2026-04-23T10:00:22.671Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/db/6212a878abc76bf8ecbda85d9030fa7fae0a16e7774c4692c8bb01dd3b1d/taos_ws_py-0.6.9-cp37-abi3-manylinux_2_31_riscv64.whl", hash = "sha256:68e85c16833691094555bc5dfea31743e11e3210a385767a3f11237c97b5fe63", size = 4246816, upload-time = "2026-04-23T10:00:24.48Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/f6/3a5ee3384636ca7ad303d774c725781073fcfd43728efa95299662907cf2/taos_ws_py-0.6.9-cp37-abi3-win_amd64.whl", hash = "sha256:8e020f7d8ba3b8c4c623d5189f63f9223b7a54f10fb8cba756defaec842e52b7", size = 4781832, upload-time = "2026-04-23T10:00:26.2Z" },
 ]
 
 [[package]]

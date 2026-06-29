@@ -71,6 +71,8 @@ dependencies = [
     "tdxdata>=1.0.1",
     "mootdx>=2.0.5",
     "opentdx>=0.5.13",
+    # TDengine 连接器（merge_kronos_czsc.py 等脚本使用）
+    "taos-ws-py>=0.6.9",
 ]
 
 [tool.uv.sources]

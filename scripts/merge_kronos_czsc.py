@@ -431,6 +431,61 @@ def _fetch_market_analysis() -> str:
     return analysis
 
 
+def _is_code_like(name: str) -> bool:
+    """判断名称是否为纯代码格式（如 sh600519 / sz399006 / 600519.SH）。"""
+    if not name:
+        return True
+    return bool(re.match(r"^(sh|sz|SH|SZ)\d{6}$", name)) or \
+           bool(re.match(r"^\d{6}\.(SH|SZ|sh|sz)$", name)) or \
+           bool(re.match(r"^\d{6}$", name))
+
+
+def _strip_market_prefix(code: str) -> str:
+    """去掉市场前缀，返回纯数字代码（如 'sh600519' → '600519'）。"""
+    m = re.match(r"^(?:sh|sz|SH|SZ|bj|BJ)(\d{6})$", code)
+    return m.group(1) if m else code
+
+
+def _batch_stock_names(codes: list[str]) -> dict[str, str]:
+    """从 TDengine stock_name 表批量获取股票名称，返回 {normalized_code: name}。"""
+    name_map: dict[str, str] = {}
+    try:
+        from taosws import connect
+    except ImportError:
+        print("[WARN] taosws 不可用，跳过股票名称查询")
+        return name_map
+
+    # 提取纯数字代码去重
+    raw_codes = list({_strip_market_prefix(c) for c in codes})
+
+    try:
+        conn = connect()
+    except Exception:
+        print("[WARN] TDengine 连接失败，跳过股票名称查询")
+        return name_map
+
+    try:
+        # 批量查询
+        placeholders = ",".join(f"'{c}'" for c in raw_codes)
+        r = conn.query(
+            f"select code, name from tdx.stock_name "
+            f"where code in ({placeholders})"
+        )
+        db_map: dict[str, str] = {}
+        for row in r:
+            db_map[row[0]] = row[1]
+
+        # 回填到原始 normalized_code
+        for ncode in codes:
+            raw = _strip_market_prefix(ncode)
+            if raw in db_map:
+                name_map[ncode] = db_map[raw]
+    finally:
+        conn.close()
+
+    return name_map
+
+
 def demote_headings(content: str, levels: int = 3) -> str:
     """将 markdown 内容中的标题统一降级若干级.
 
@@ -613,6 +668,29 @@ def merge(date_str: str):
 
     kronos_stocks = parse_kronos(kronos_path)
     czsc_stocks = parse_czsc(czsc_path)
+
+    # 补齐股票名称：解析出的名称若是纯代码则通过 TDX 查询
+    need_names: list[str] = []
+    for code in set(list(kronos_stocks.keys()) + list(czsc_stocks.keys())):
+        ks_name = kronos_stocks.get(code, {}).get("name", "")
+        cs_name = czsc_stocks.get(code, {}).get("name", "")
+        if _is_code_like(ks_name) and _is_code_like(cs_name):
+            need_names.append(code)
+
+    if need_names:
+        print(f"查询 {len(need_names)} 只股票名称...")
+        name_map = _batch_stock_names(need_names)
+        for code, stock in kronos_stocks.items():
+            if _is_code_like(stock.get("name", "")) and code in name_map:
+                stock["name"] = name_map[code]
+        for code, stock in czsc_stocks.items():
+            if _is_code_like(stock.get("name", "")) and code in name_map:
+                stock["name"] = name_map[code]
+        resolved = sum(1 for k in need_names if k in name_map)
+        print(f"  已解析 {resolved}/{len(need_names)}")
+        if resolved < len(need_names):
+            missing = [k for k in need_names if k not in name_map]
+            print(f"  未解析: {', '.join(missing[:10])}{'...' if len(missing) > 10 else ''}")
 
     # 盘面分析
     market_analysis = _fetch_market_analysis()

@@ -17,19 +17,19 @@ import os
 import sys
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import redirect_stderr
 from datetime import date, timedelta
 from pathlib import Path
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars, prefetch_factors
-from czsc import CZSC, Freq, ZS
+import numpy as np
+import pandas as pd
+import talib
+from taosws import connect
+
+from czsc import CZSC, Freq, ZS, format_standard_kline
 import math
 import time
-
-import numpy as np
-import talib
 
 FREQS = [
     ("1d", Freq.D),
@@ -48,10 +48,6 @@ def _setup_logging(log_file: str) -> logging.Logger:
     except ImportError:
         pass
 
-    # 抑制第三方库日志噪声（XDXR 解析失败等不影响结果的错误）
-    for noisy in ("PYTDX2", "opentdx", "mootdx"):
-        logging.getLogger(noisy).setLevel(logging.CRITICAL)
-
     logger = logging.getLogger("predict")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
@@ -64,24 +60,212 @@ def _setup_logging(log_file: str) -> logging.Logger:
     return logger
 
 
-def _batch_stock_names(symbols: list[str], devnull) -> dict[str, str]:
-    """批量获取股票名称，返回 {symbol: name} 字典"""
-    from tdxdata.api import TdxData
+# ── TDengine 数据读取 ──
 
-    name_map = {}
-    with redirect_stderr(devnull):
-        tdx = TdxData()
-        try:
-            for symbol in symbols:
-                code = _normalize_symbol(symbol)
-                try:
-                    name = tdx.get_stock_name(code)
-                    name_map[symbol] = name or code
-                except Exception:
-                    name_map[symbol] = code
-        finally:
-            tdx.close()
+# 已有表的周期 → TDengine 表后缀
+_PERIOD_TABLE = {"1m": "1m", "5m": "5m", "1d": "1d"}
+
+# 需要从更细粒度采样的周期 → (源周期, pandas rule)
+_PERIOD_RESAMPLE: dict[str, tuple[str, str]] = {
+    "30m": ("5m", "30min"),
+    "60m": ("5m", "1h"),
+    "1w": ("1d", "W-FRI"),
+    "1M": ("1d", "ME"),
+}
+
+# pandas resample 聚合规则
+_OHLCV_AGG = {
+    "open": "first", "high": "max", "low": "min", "close": "last",
+    "volume": "sum", "amount": "sum",
+}
+
+# Fri 周期 → Freq 枚举
+_FREQ_MAP: dict[str, Freq] = {
+    "1m": Freq.F1, "5m": Freq.F5, "1d": Freq.D,
+    "30m": Freq.F30, "60m": Freq.F60, "1w": Freq.W, "1M": Freq.M,
+}
+
+
+def _strip_suffix(symbol: str) -> str:
+    """600519.SH → 600519"""
+    return symbol.split(".")[0]
+
+
+def _batch_stock_names(symbols: list[str]) -> dict[str, str]:
+    """从 TDengine stock_name 表批量获取股票名称"""
+    name_map: dict[str, str] = {}
+    raw_codes = [_strip_suffix(s) for s in symbols]
+
+    try:
+        conn = connect()
+    except Exception:
+        print("[WARN] TDengine 连接失败，跳过股票名称查询")
+        return {s: s for s in symbols}
+
+    try:
+        placeholders = ",".join(f"'{c}'" for c in raw_codes)
+        r = conn.query(
+            f"select code, name from tdx.stock_name "
+            f"where code in ({placeholders})"
+        )
+        db_map: dict[str, str] = {row[0]: row[1] for row in r}
+    finally:
+        conn.close()
+
+    for symbol in symbols:
+        name_map[symbol] = db_map.get(_strip_suffix(symbol), symbol)
     return name_map
+
+
+def _query_kline(conn, code: str, period: str, sdt: str, edt: str) -> pd.DataFrame | None:
+    """从 TDengine 查询单周期K线，返回 DataFrame（index=ts）"""
+    try:
+        r = conn.query(
+            f"select ts, open, high, low, close, volume, amount "
+            f"from tdx.k_{code}_{period} "
+            f"where ts >= '{sdt}' and ts <= '{edt} 23:59:59' order by ts"
+        )
+        rows = list(r)
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume", "amount"])
+    df["ts"] = pd.to_datetime(df["ts"]).dt.tz_localize(None)
+    df = df.set_index("ts").sort_index()
+    return df.astype({c: np.float64 for c in ["open", "high", "low", "close", "volume", "amount"]})
+
+
+def _fetch_adjust_events(conn, code: str) -> list[dict]:
+    """从 TDengine 读取复权事件"""
+    events: list[dict] = []
+    try:
+        r = conn.query(
+            f"select ts, fenhong, peigujia, songzhuangu, peigu "
+            f"from tdx.a_{code} order by ts"
+        )
+        for row in r:
+            ts, fh, pj, sz, pg = row
+            fh, pj, sz, pg = float(fh), float(pj), float(sz), float(pg)
+            if fh > 0 or sz > 0 or pg > 0:
+                events.append({
+                    "date": pd.Timestamp(ts).tz_localize(None),
+                    "fenhong": fh,
+                    "peigujia": pj,
+                    "songzhuangu": sz,
+                    "peigu": pg,
+                })
+    except Exception:
+        pass
+    return events
+
+
+def _compute_adjust_factor(df: pd.DataFrame, events: list[dict]) -> np.ndarray:
+    """计算后复权因子。
+
+    因子从最新日向历史日累积：
+      factor[最新] = 1.0 → 当前价格即为实际市场价
+      每遇除权事件: factor[:事件位置] *= 乘数 → 历史价格按分红比例放大
+
+    乘数公式（TDX 标准）:
+      D = fenhong/10, S = songzhuangu/10, P = peigu/10, Pp = peigujia
+      multiplier = C * (1+S+P) / (C - D + P*Pp)
+
+    Returns:
+        np.ndarray of shape [n_bars], dtype float64
+    """
+    n = len(df)
+    factor = np.ones(n, dtype=np.float64)
+    if not events:
+        return factor
+
+    events_sorted = sorted(events, key=lambda e: e["date"])
+    df_dates = df.index.values
+    raw_close = df["close"].values
+
+    for evt in events_sorted:
+        evt_date = np.datetime64(evt["date"])
+        event_idx = int(np.searchsorted(df_dates, evt_date))
+        if event_idx >= n:
+            continue
+        prev_idx = event_idx - 1
+        if prev_idx < 0:
+            continue
+        C_before = raw_close[prev_idx]
+        if C_before <= 0:
+            continue
+
+        D = evt["fenhong"] / 10.0
+        S = evt["songzhuangu"] / 10.0
+        P = evt["peigu"] / 10.0
+        Pp = evt["peigujia"]
+
+        denominator = C_before - D + P * Pp
+        if denominator <= 0:
+            continue
+        numerator = C_before * (1.0 + S + P)
+        multiplier = numerator / denominator
+
+        if abs(multiplier - 1.0) < 1e-12:
+            continue
+        factor[:event_idx] *= multiplier
+
+    return factor
+
+
+def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame | None:
+    """pandas OHLCV 采样到更高周期"""
+    ohlc_cols = ["open", "high", "low", "close"]
+    if not all(c in df.columns for c in ohlc_cols):
+        return None
+    resampled = df.resample(rule).agg(_OHLCV_AGG)
+    resampled = resampled.dropna(subset=ohlc_cols, how="all")
+    return resampled if not resampled.empty else None
+
+
+def _get_raw_bars_tdengine(
+    symbol: str, period: str, sdt: str, edt: str
+) -> list:
+    """从 TDengine 读取K线数据（后复权），自动处理采样与复权，返回 RawBar 列表"""
+    code = _strip_suffix(symbol)
+
+    conn = connect()
+    try:
+        # 确定数据源
+        if period in _PERIOD_TABLE:
+            df = _query_kline(conn, code, period, sdt, edt)
+        elif period in _PERIOD_RESAMPLE:
+            src_period, rule = _PERIOD_RESAMPLE[period]
+            df = _query_kline(conn, code, src_period, sdt, edt)
+            if df is not None:
+                df = _resample_ohlcv(df, rule)
+        else:
+            conn.close()
+            return []
+
+        if df is None or df.empty:
+            conn.close()
+            return []
+
+        # 后复权
+        events = _fetch_adjust_events(conn, code)
+        if events:
+            factor = _compute_adjust_factor(df, events)
+            for col in ["open", "high", "low", "close"]:
+                df[col] = df[col] * factor
+    finally:
+        conn.close()
+
+    # 转 RawBar
+    freq_enum = _FREQ_MAP.get(period, Freq.D)
+    df = df.reset_index().rename(columns={"ts": "dt", "volume": "vol"})
+    df["symbol"] = symbol
+    return format_standard_kline(
+        df[["dt", "symbol", "open", "close", "high", "low", "vol", "amount"]],
+        freq=freq_enum,
+    )
 
 
 def _find_divergence(series, closes, lookback=80):
@@ -379,12 +563,12 @@ def assess_trend(czsc_obj, freq_label="1d"):
     }
 
 
-def predict_stock(symbol, sdt, edt, fq="前复权", logger=None):
+def predict_stock(symbol, sdt, edt, logger=None):
     """对单只股票生成多周期预测结果"""
     results = {}
     for label, freq in FREQS:
         try:
-            bars = get_raw_bars(symbol, freq.value, sdt, edt, fq=fq, realtime=True)
+            bars = _get_raw_bars_tdengine(symbol, label, sdt, edt)
             if not bars:
                 results[label] = {"error": "无数据"}
                 continue
@@ -668,18 +852,11 @@ def main():
 
     # 批量获取股票名称
     print("获取股票名称...")
-    devnull = open(os.devnull, "w")
-    try:
-        name_map = _batch_stock_names(symbols, devnull)
-        for s in symbols:
-            logger.info(f"{s} → {name_map.get(s, s)}")
+    name_map = _batch_stock_names(symbols)
+    for s in symbols:
+        logger.info(f"{s} → {name_map.get(s, s)}")
 
-        # 预取复权因子（缓存 1 个月；网络获取不到最新因子时用过期缓存兜底，
-        # 后续 get_raw_bars 命中缓存跳过网络请求）
-        print(f"预取复权因子 ({len(symbols)}只)...")
-        prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
-
-        # 并行分析
+    # 并行分析
         all_results = {}
         total = len(symbols)
 
@@ -691,7 +868,7 @@ def main():
             workers = min(args.workers, total)
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    executor.submit(predict_stock, symbol, sdt, edt, "前复权", logger): symbol
+                    executor.submit(predict_stock, symbol, sdt, edt, logger): symbol
                     for symbol in symbols
                 }
                 done_count = 0
@@ -725,8 +902,6 @@ def main():
 
         print(f"\n  → {filename}")
         print(f"  → {log_file}")
-    finally:
-        devnull.close()
         elapsed = time.time() - t_start
         print(f"完成，耗时 {elapsed:.1f} 秒")
 

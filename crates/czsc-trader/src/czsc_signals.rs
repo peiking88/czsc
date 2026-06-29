@@ -1,12 +1,13 @@
 use crate::engine_v2::catalog::SignalCategory;
 use crate::engine_v2::compiler::CompiledSignalPlanV2;
 use crate::sig_parse::SignalConfig;
-use czsc_core::analyze::CZSC;
+use czsc_core::analyze::{CZSC, resolve_max_bi_num, resolve_min_bi_len};
 use czsc_core::objects::bar::RawBar;
 use czsc_core::objects::signal::Signal;
 use czsc_signals::registry;
 use czsc_signals::types::TaCache;
 use czsc_utils::bar_generator::BarGenerator;
+use czsc_utils::errors::UtilsError;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone)]
@@ -27,7 +28,7 @@ struct CompiledKlineFreqGroup {
     ops: Vec<CompiledKlineSignalOp>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct BarFingerprint {
     id: i32,
     dt_ns: i64,
@@ -56,6 +57,7 @@ impl BarFingerprint {
 }
 
 /// 多级别信号计算引擎
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CzscSignals {
     /// K 线合成器
     pub bg: BarGenerator,
@@ -77,10 +79,15 @@ pub struct CzscSignals {
     /// Position 事件匹配使用的信号字典：key -> value
     pub signal_map: HashMap<String, String>,
 
-    /// 预编译后的 K 线信号执行计划
+    /// 预编译后的 K 线信号执行计划（含函数指针，不入快照；restore 后由
+    /// `ensure_compiled_kline_ops` 从 `signals_config` 重建）
+    #[serde(skip)]
     compiled_kline_groups: Vec<CompiledKlineFreqGroup>,
+    #[serde(skip)]
     use_plan_compiled: bool,
+    #[serde(skip)]
     compiled_cfg_ptr: usize,
+    #[serde(skip)]
     compiled_cfg_len: usize,
     /// 需要维护 CZSC 的频率集合；存在 trader 级信号时退化为全量维护
     required_kas_freqs: HashSet<String>,
@@ -92,13 +99,17 @@ pub struct CzscSignals {
 }
 
 impl CzscSignals {
+    fn new_czsc_from_bars(bars: Vec<RawBar>) -> CZSC {
+        CZSC::new(bars, resolve_max_bi_num(0), resolve_min_bi_len(0))
+    }
+
     pub fn new(symbol: String, bg: BarGenerator) -> Self {
         let mut kas = BTreeMap::new();
         for (freq, bars_lock) in &bg.freq_bars {
             let bars = bars_lock.read();
             if !bars.is_empty() {
                 let bars_vec: Vec<RawBar> = bars.iter().cloned().collect();
-                kas.insert(freq.to_string(), CZSC::new(bars_vec, 50));
+                kas.insert(freq.to_string(), Self::new_czsc_from_bars(bars_vec));
             }
         }
 
@@ -244,14 +255,19 @@ impl CzscSignals {
     }
 
     /// 执行主更新流程
-    pub fn update_signals(&mut self, bar: &RawBar, signals_config: &[SignalConfig]) {
+    pub fn update_signals(
+        &mut self,
+        bar: &RawBar,
+        signals_config: &[SignalConfig],
+    ) -> Result<(), UtilsError> {
         self.ensure_compiled_kline_ops(signals_config);
 
         // 1. 驱动 bg 喂入新 Bar，并同步各周期 CZSC
-        let changed_freqs = self.advance_kas(bar, true);
+        let changed_freqs = self.advance_kas(bar, true)?;
 
         self.reset_signal_state(bar);
         self.compute_kline_signals(Some(&changed_freqs));
+        Ok(())
     }
 
     /// 预热后用当前状态 prime 一次信号缓存，对齐 Python `CzscSignals(bg)` 构造语义。
@@ -328,8 +344,11 @@ impl CzscSignals {
     /// 对齐 Python `generate_czsc_signals`：`bars_left` 只用于初始化 `BarGenerator`，
     /// 不会在 warmup 阶段调用 `update_signals`。CZSC 会在 warmup 结束后由
     /// `prime_signals` 基于 BG 快照一次性重建。
-    pub fn warmup_bar(&mut self, bar: &RawBar) {
-        let _ = self.bg.update_bar(bar);
+    ///
+    /// `BarGenerator::update_bar` 现在会对 NaN OHLCV / freq mismatch 等硬错返回 Err，
+    /// 这里直接 propagate 而不再 `let _` 吞掉，避免下游用 stale 状态继续算出"幻象"信号。
+    pub fn warmup_bar(&mut self, bar: &RawBar) -> Result<(), UtilsError> {
+        self.bg.update_bar(bar)
     }
 
     fn rebuild_kas_from_bg(&mut self) {
@@ -343,12 +362,17 @@ impl CzscSignals {
                 continue;
             }
             let bars_vec: Vec<RawBar> = bars.iter().cloned().collect();
-            self.kas.insert(freq.to_string(), CZSC::new(bars_vec, 50));
+            self.kas
+                .insert(freq.to_string(), Self::new_czsc_from_bars(bars_vec));
         }
     }
 
-    fn advance_kas(&mut self, bar: &RawBar, update_fingerprint: bool) -> HashSet<String> {
-        let _ = self.bg.update_bar(bar);
+    fn advance_kas(
+        &mut self,
+        bar: &RawBar,
+        update_fingerprint: bool,
+    ) -> Result<HashSet<String>, UtilsError> {
+        self.bg.update_bar(bar)?;
 
         let mut changed_freqs: HashSet<String> = HashSet::new();
         for (freq, bars_lock) in &self.bg.freq_bars {
@@ -378,7 +402,7 @@ impl CzscSignals {
 
             if !self.kas.contains_key(&freq_str) {
                 let bars_vec: Vec<RawBar> = bars.iter().cloned().collect();
-                let czsc = CZSC::new(bars_vec, 50);
+                let czsc = Self::new_czsc_from_bars(bars_vec);
                 self.kas.insert(freq_str.clone(), czsc);
                 changed_freqs.insert(freq_str);
             } else if is_changed {
@@ -388,6 +412,6 @@ impl CzscSignals {
                 changed_freqs.insert(freq_str);
             }
         }
-        changed_freqs
+        Ok(changed_freqs)
     }
 }

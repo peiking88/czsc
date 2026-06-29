@@ -7,6 +7,29 @@
 
 ---
 
+## [1.8.0] — 2026-06-29
+
+### Changed
+
+- **同步 upstream/master**：拉取 waditu/czsc 最新代码（rc.8 + Unreleased），合并至本项目。
+
+### Added (from upstream)
+
+- **`CZSC_MIN_BI_LEN` 真实生效**：Rust 端成笔逻辑现在读取环境变量，不再硬编码 6。
+- **`czsc.resample_bars`**：基础周期 K 线聚合到目标周期，Rust 实现。
+- **PyO3 enum `.name` getter + 可哈希**：`Freq` / `Mark` / `Direction` / `Operate` 全面对齐 Python `enum.Enum` 语义。
+- **`CzscTrader` 完整状态快照**：零重放热启动。
+- **typer CLI 模块**：`czsc.cli` 暴露核心能力供 LLM/人类调用。
+- **`auto-czsc-quant` MVP**：自动化量化信号探索工具。
+
+### Breaking changes (from upstream)
+
+- `RawBar` 构造拒绝 tz-aware datetime（`PyValueError`），调用方需先 `.dt.tz_localize(None)`。
+- `BarGenerator` 拒绝 NaN OHLCV，沿调用链 propagate。
+- `CzscTrader.update` / `on_bar` / `update_signals` 返回 `PyResult<()>`，硬错 fail-loud。
+
+---
+
 ## [1.7.7] — 2026-06-15
 
 ### Fixed

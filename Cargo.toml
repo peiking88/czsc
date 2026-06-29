@@ -3,7 +3,7 @@ resolver = "2"
 members  = ["crates/*"]
 
 [workspace.package]
-version       = "1.7.9"
+version       = "1.8.0"
 edition       = "2024"
 license       = "MIT"
 repository    = "https://github.com/waditu/czsc"
@@ -21,7 +21,7 @@ categories    = ["finance", "mathematics", "science"]
 # 注：polars 暂停在 0.52.0——polars-arrow 0.53.x 给 chrono 加了 `<=0.4.41`
 # 的死锁约束，会与 pyo3-stub-gen 0.21+ 要求的 chrono `^0.4.44` 冲突，
 # 等 polars 上游放宽后再升 0.53.x。
-chrono        = "0.4"
+chrono        = { version = "0.4", features = ["serde"] }
 hashbrown     = "0.17"
 ordered-float = "5.3"
 polars        = { version = "0.52.0", features = [
@@ -37,21 +37,21 @@ polars        = { version = "0.52.0", features = [
 pyo3          = { version = "0.28" }
 numpy         = "0.28"
 rayon         = "1"
-serde         = { version = "1", features = ["derive"] }
+serde         = { version = "1", features = ["derive", "rc"] }
 
 # 工作区内部 crate —— path + version 双声明：
 #   - path：本地/CI 走相对路径，`cargo build --workspace` 直接拉源码
 #   - version：`cargo publish` 时按 version 解析 crates.io 上的依赖
 # 业务 crate 用 `{ workspace = true }` 引用，避免在每个 Cargo.toml
 # 重复维护版本号；workspace.package.version 升级一次，全部跟随。
-czsc               = { path = "crates/czsc",               version = "1.0.0-rc.7" }
-czsc-core          = { path = "crates/czsc-core",          version = "1.0.0-rc.7" }
-czsc-utils         = { path = "crates/czsc-utils",         version = "1.0.0-rc.7" }
-czsc-ta            = { path = "crates/czsc-ta",            version = "1.0.0-rc.7" }
-czsc-signals       = { path = "crates/czsc-signals",       version = "1.0.0-rc.7" }
-czsc-trader        = { path = "crates/czsc-trader",        version = "1.0.0-rc.7" }
-czsc-signal-macros = { path = "crates/czsc-signal-macros", version = "1.0.0-rc.7" }
-czsc-derive        = { path = "crates/czsc-derive",        version = "1.0.0-rc.7" }
+czsc               = { path = "crates/czsc",               version = "1.8.0" }
+czsc-core          = { path = "crates/czsc-core",          version = "1.8.0" }
+czsc-utils         = { path = "crates/czsc-utils",         version = "1.8.0" }
+czsc-ta            = { path = "crates/czsc-ta",            version = "1.8.0" }
+czsc-signals       = { path = "crates/czsc-signals",       version = "1.8.0" }
+czsc-trader        = { path = "crates/czsc-trader",        version = "1.8.0" }
+czsc-signal-macros = { path = "crates/czsc-signal-macros", version = "1.8.0" }
+czsc-derive        = { path = "crates/czsc-derive",        version = "1.8.0" }
 
 [profile.release]
 lto           = true

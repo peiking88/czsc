@@ -85,7 +85,7 @@ opentdx = { path = "/home/li/peiking88/opentdx", editable = true }
 czsc = "czsc.cli:app"
 
 [[tool.uv.index]]
-url = "https://pypi.python.org/simple"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
 [project.optional-dependencies]

@@ -64,6 +64,13 @@ uv run --no-sync ruff format czsc/ tests/
 uv run --no-sync ruff check czsc/ tests/
 ```
 
+> **镜像加速**：依赖包统一从清华镜像下载，`pyproject.toml` 中配置：
+> ```toml
+> [tool.uv]
+> index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+> ```
+> 如未配置 `[tool.uv]`，手动指定环境变量：`UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync --extra dev`
+>
 > **`--no-sync` 约定**：`uv run` 默认会做 lockfile 解析 + venv 一致性检查（本地稳定 4-5s 固定开销）。日常开发循环里依赖很少变，统一用 `--no-sync` 跳过；仅在 `pyproject.toml` / `uv.lock` 改动后显式跑一次 `uv sync` 即可。
 
 ### 测试规范

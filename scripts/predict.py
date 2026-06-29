@@ -857,53 +857,53 @@ def main():
         logger.info(f"{s} → {name_map.get(s, s)}")
 
     # 并行分析
-        all_results = {}
-        total = len(symbols)
+    all_results = {}
+    total = len(symbols)
 
-        if total == 1:
-            symbol = symbols[0]
-            print(f"\n[1/1] {name_map.get(symbol, symbol)} ...")
-            all_results[symbol] = predict_stock(symbol, sdt, edt, logger=logger)
-        else:
-            workers = min(args.workers, total)
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(predict_stock, symbol, sdt, edt, logger): symbol
-                    for symbol in symbols
-                }
-                done_count = 0
-                for future in as_completed(futures):
-                    symbol = futures[future]
-                    done_count += 1
-                    try:
-                        all_results[symbol] = future.result()
-                    except Exception as e:
-                        logger.error(f"{symbol} 分析异常: {e}")
-                        all_results[symbol] = {label: {"error": str(e)} for label, _ in FREQS}
-                    display = name_map.get(symbol, symbol)
-                    print(f"  [{done_count}/{total}] {display} 完成")
+    if total == 1:
+        symbol = symbols[0]
+        print(f"\n[1/1] {name_map.get(symbol, symbol)} ...")
+        all_results[symbol] = predict_stock(symbol, sdt, edt, logger=logger)
+    else:
+        workers = min(args.workers, total)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(predict_stock, symbol, sdt, edt, logger): symbol
+                for symbol in symbols
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                symbol = futures[future]
+                done_count += 1
+                try:
+                    all_results[symbol] = future.result()
+                except Exception as e:
+                    logger.error(f"{symbol} 分析异常: {e}")
+                    all_results[symbol] = {label: {"error": str(e)} for label, _ in FREQS}
+                display = name_map.get(symbol, symbol)
+                print(f"  [{done_count}/{total}] {display} 完成")
 
-        # ── 盘面分析 ──
-        # 确定输出文件名
-        if from_zxg:
-            filename = f"output/czsc-zxg-{edt.replace('-', '')}.md"
-        elif len(symbols) == 1:
-            filename = f"output/czsc-{symbols[0].replace('.', '_')}.md"
-        else:
-            filename = _merged_filename(symbols)
+    # ── 盘面分析 ──
+    # 确定输出文件名
+    if from_zxg:
+        filename = f"output/czsc-zxg-{edt.replace('-', '')}.md"
+    elif len(symbols) == 1:
+        filename = f"output/czsc-{symbols[0].replace('.', '_')}.md"
+    else:
+        filename = _merged_filename(symbols)
 
-        # 生成报告
-        if len(symbols) == 1 and not from_zxg:
-            md = format_md(symbols[0], all_results[symbols[0]], name=name_map.get(symbols[0]))
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(md)
-        else:
-            _write_merged_report(symbols, all_results, filename, name_map=name_map)
+    # 生成报告
+    if len(symbols) == 1 and not from_zxg:
+        md = format_md(symbols[0], all_results[symbols[0]], name=name_map.get(symbols[0]))
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(md)
+    else:
+        _write_merged_report(symbols, all_results, filename, name_map=name_map)
 
-        print(f"\n  → {filename}")
-        print(f"  → {log_file}")
-        elapsed = time.time() - t_start
-        print(f"完成，耗时 {elapsed:.1f} 秒")
+    print(f"\n  → {filename}")
+    print(f"  → {log_file}")
+    elapsed = time.time() - t_start
+    print(f"完成，耗时 {elapsed:.1f} 秒")
 
 
 if __name__ == "__main__":

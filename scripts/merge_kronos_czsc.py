@@ -24,45 +24,22 @@ from datetime import date
 # ── 盘面分析资讯渠道 ──
 # 优先从主流财经网站直接抓取最新资讯页面（不依赖搜索引擎）。
 # 注：财联社、雪球等站点为纯 JS 渲染，requests 无法获取实质内容，暂不纳入。
-MARKET_NEWS_CHANNELS = [
-    {"name": "华尔街见闻", "urls": [
-        "https://wallstreetcn.com/news/global",
-    ]},
-    {"name": "新浪财经", "urls": [
-        "https://finance.sina.com.cn/7x24/",
-        "https://finance.sina.com.cn/stock/marketresearch/",
-    ]},
-    {"name": "凤凰财经", "urls": [
-        "https://finance.ifeng.com/stock/",
-    ]},
-    {"name": "第一财经", "urls": [
-        "https://www.yicai.com/news/",
-    ]},
-    {"name": "金融界", "urls": [
-        "https://stock.jrj.com.cn/",
-    ]},
-    {"name": "集思录", "urls": [
-        "https://www.jisilu.cn/home/explore/",
-    ]},
-]
+MARKET_NEWS_CHANNELS: list = []
 
 # ── 分析师观点搜索渠道 ──
 # 通过 Bing 搜索分析师最新观点，对返回结果做域名过滤（优先指定财经网站）。
 MARKET_ANALYST_CHANNELS = [
-    {"name": "陈果",     "query": "陈果 A股 最新观点 {month}"},
-    {"name": "洪灏",     "query": "洪灏 A股 最新研判 {month}"},
-    {"name": "高盛",     "query": "高盛 A股 最新观点 {month}"},
-    {"name": "大摩",     "query": "摩根士丹利 A股 最新策略 {month}"},
-    {"name": "中信证券", "query": "中信证券 A股 投资策略 {month}"},
-    {"name": "广发郭磊", "query": "郭磊 A股 最新观点 {month}"},
+    {"name": "洪灏",     "query": "洪灏 A股 最新研判 近一周"},
+    {"name": "陈果",     "query": "陈果 A股 最新观点 近一周"},
+    {"name": "李迅雷",   "query": "李迅雷 A股 最新观点 近一周"},
+    {"name": "高盛",     "query": "高盛 A股 最新观点 近一周"},
+    {"name": "大摩",     "query": "摩根士丹利 A股 最新策略 近一周"},
+    {"name": "中信证券", "query": "中信证券 A股 投资策略 近一周"},
+    {"name": "郭磊",     "query": "郭磊 A股 最新观点 近一周"},
 ]
 
 # 搜索结果域名白名单（优先匹配的取前 2 条，兜底取任意域名前 2 条）
 _FINANCE_DOMAINS = [
-    # 6 个指定财经网站
-    "wallstreetcn.com", "sina.com.cn", "sina.cn",
-    "ifeng.com", "yicai.com", "jrj.com.cn", "jisilu.cn",
-    # 兜底：其他主流财经网站
     "eastmoney.com", "stcn.com", "caixin.com",
     "cls.cn", "cs.com.cn", "10jqka.com.cn",
     "sohu.com", "163.com", "36kr.com",
@@ -373,10 +350,8 @@ def _fetch_market_analysis() -> str:
             print(f"    - {ch['name']}: 获取失败")
 
     # ── 第二阶段：分析师观点（Bing 搜索 + 域名过滤） ──
-    today = date.today()
-    month_str = f"{today.year}年{today.month}月"
     for ch in MARKET_ANALYST_CHANNELS:
-        query = ch["query"].replace("{month}", month_str)
+        query = ch["query"]
         print(f"  搜索分析师: {ch['name']} — {query}")
         results = _bing_search(query, max_results=5)
         # 域名过滤：优先财经网站
@@ -586,8 +561,8 @@ def parse_kronos(filepath: str) -> OrderedDict:
     # 匹配所有个股/指数标题: #### 名字 (code) 或 #### 名字 (code) [category]
     header_pattern = re.compile(r"^####\s+(.+?)\s+\(((?:sh|sz|SH|SZ)\d{6})\)(?:\s*\[(.+?)\])?\s*$", re.MULTILINE)
 
-    # 找到所有 ### 区块边界，用于推断 category
-    sec_pattern = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
+    # 找到所有 ##/### 区块边界，用于推断 category
+    sec_pattern = re.compile(r"^#{2,3}\s+(.+?)\s*$", re.MULTILINE)
     sec_matches = list(sec_pattern.finditer(content))
 
     # 构建每个位置所属的 category
@@ -669,12 +644,13 @@ def merge(date_str: str):
     kronos_stocks = parse_kronos(kronos_path)
     czsc_stocks = parse_czsc(czsc_path)
 
-    # 补齐股票名称：解析出的名称若是纯代码则通过 TDX 查询
+    # 补齐股票名称：有效展示名若是纯代码则通过 TDX 查询
     need_names: list[str] = []
     for code in set(list(kronos_stocks.keys()) + list(czsc_stocks.keys())):
         ks_name = kronos_stocks.get(code, {}).get("name", "")
         cs_name = czsc_stocks.get(code, {}).get("name", "")
-        if _is_code_like(ks_name) and _is_code_like(cs_name):
+        effective = ks_name or cs_name  # 目录/标题中实际展示的名称（Kronos 优先）
+        if _is_code_like(effective):
             need_names.append(code)
 
     if need_names:
@@ -701,6 +677,9 @@ def merge(date_str: str):
         if code not in all_codes:
             all_codes.append(code)
 
+    # 已知指数代码（纯数字）
+    _KNOWN_INDEX_CODES = frozenset({"999999", "399001", "399005", "399006", "000001", "000300", "000016", "000688", "000852", "399303"})
+
     # 按类别分组（来自 Kronos）
     categories = OrderedDict()
     categories["指数"] = []
@@ -715,8 +694,8 @@ def merge(date_str: str):
         cs = czsc_stocks.get(code)
         cat = ks.get("category", "") if ks else ""
 
-        # 指数直接归入指数组
-        if cat == "指数":
+        # 指数直接归入指数组（Kronos 标记为"指数" 或 代码本身是已知指数）
+        if cat == "指数" or _strip_market_prefix(code) in _KNOWN_INDEX_CODES:
             categories["指数"].append(code)
             continue
 

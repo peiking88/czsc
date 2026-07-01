@@ -345,3 +345,10 @@ uv run ruff check czsc/ tests/
 - 新增: 多周期强分型+买卖点扫描工具
 - 新增: 三周期仓位提醒与报告优化
 - 新增: TDX 数据连接器与缠论趋势预测脚本
+
+### 2026-07-01 — 1.8.2
+- 修复: merge_kronos_czsc 搜索后端 DDG → 百度，中文搜索更稳定
+- 清理: 删除 .claude/skills/ 下 260+ 过时信号文档及 skill 定义
+- 清理: 删除 scripts/extract_signal_docs.py、.claude/settings.json
+
+### 2026-06-30 18:42:26

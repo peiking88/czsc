@@ -114,141 +114,83 @@ def _extract_date(text: str) -> str:
     return ""
 
 
-# DDG 不可达时缓存结果，避免每个渠道重复超时
-_ddg_unreachable = None  # None=未检测, True=不可达, False=可达
+def _baidu_search(query: str, max_results: int = 5, timeout: int = 15) -> list[dict]:
+    """使用百度搜索，返回 [{title, snippet, url, date}]。
 
-
-def _web_search(query: str, max_results: int = 3, timeout: int = 5) -> list[dict]:
-    """使用 DuckDuckGo HTML 搜索，返回 [{title, snippet, url, date}]。"""
-    global _ddg_unreachable
-    if _ddg_unreachable:
-        return []
-
+    百度对中文财经查询返回质量高且稳定，无搜狗反爬、Bing 中文乱码问题。
+    """
     import requests as _req
     from urllib.parse import quote_plus
 
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }
     results = []
     try:
-        url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+        url = f"https://www.baidu.com/s?wd={quote_plus(query)}&ie=utf-8"
         resp = _req.get(url, headers=headers, timeout=timeout)
         resp.raise_for_status()
         html = resp.text
 
-        # DuckDuckGo HTML 结果格式: <a class="result__a" href="...">Title</a>
-        # 后跟 <a class="result__snippet">...</a>
-        # 每条结果在 <div class="result"> 内
-        result_blocks = re.findall(
-            r'<div class="result[^"]*">(.*?)</div>\s*(?:<div class="result)',
-            html, re.S,
-        )
-        # 更宽松的匹配：逐个 result__a 提取
-        if not result_blocks:
-            result_blocks = re.findall(
-                r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>(.*?)(?=<a[^>]+class="result__a"|$)',
-                html, re.S,
-            )
-            for link, title, tail in result_blocks[:max_results]:
-                title_clean = re.sub(r"<[^>]+>", "", title).strip()
-                snippet_match = re.search(
-                    r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', tail, re.S,
-                )
-                snippet = ""
-                if snippet_match:
-                    snippet = re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip()
-                d = _extract_date(title_clean + " " + snippet)
-                results.append({
-                    "title": title_clean,
-                    "snippet": snippet,
-                    "url": link,
-                    "date": d,
-                })
+        if "百度安全验证" in html:
+            print(f"  [百度触发验证码，跳过]")
             return results
 
-        # 从 result blocks 提取
-        for block in result_blocks[:max_results]:
-            link_m = re.search(r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', block, re.S)
-            if not link_m:
+        # 提取搜索结果: <h3 class="t"> → <a href="baidu redirect">title</a>
+        h3_pattern = re.compile(
+            r'<h3[^>]*class="[^"]*t[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>\s*</h3>',
+            re.S,
+        )
+        h3_matches = h3_pattern.findall(html)
+
+        # 提取摘要
+        snippets: list[str] = []
+        for pat in [
+            r'<span[^>]*class="[^"]*content-right_[^"]*"[^>]*>(.*?)</span>',
+            r'<div[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</div>',
+            r'<span[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</span>',
+        ]:
+            raw = re.findall(pat, html, re.S)
+            if raw:
+                snippets = [re.sub(r"<[^>]+>", "", s).strip() for s in raw]
+                break
+
+        # 解析每条结果，同时把百度跳转链解析为真实 URL
+        seen_urls = set()
+        for i, (baidu_url, title_html) in enumerate(h3_matches[:max_results]):
+            title = re.sub(r"<[^>]+>", "", title_html).strip()
+            if not title:
                 continue
-            link = link_m.group(1)
-            title_clean = re.sub(r"<[^>]+>", "", link_m.group(2)).strip()
-            snippet_m = re.search(
-                r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', block, re.S,
-            )
-            snippet = ""
-            if snippet_m:
-                snippet = re.sub(r"<[^>]+>", "", snippet_m.group(1)).strip()
-            d = _extract_date(title_clean + " " + snippet)
+
+            # 跟百度 302 跳转拿到真实 URL
+            real_url = baidu_url
+            try:
+                hr = _req.head(baidu_url, headers=headers, timeout=5, allow_redirects=False)
+                real_url = hr.headers.get("Location", baidu_url)
+            except Exception:
+                pass
+
+            if real_url in seen_urls:
+                continue
+            seen_urls.add(real_url)
+
+            snippet = snippets[i] if i < len(snippets) else ""
+            d = _extract_date(title + " " + snippet)
+
             results.append({
-                "title": title_clean,
+                "title": title,
                 "snippet": snippet,
-                "url": link,
+                "url": real_url,
                 "date": d,
             })
     except Exception as e:
-        _ddg_unreachable = True
-        print(f"  [DDG 搜索失败: {e}]")
-
-    return results
-
-
-def _bing_search(query: str, max_results: int = 3, timeout: int = 15) -> list[dict]:
-    """使用 Bing 搜索（备选），返回 [{title, snippet, url, date}]。"""
-    import requests as _req
-    from urllib.parse import quote_plus
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    }
-    results = []
-    try:
-        url = f"https://www.bing.com/search?q={quote_plus(query)}&setlang=zh-CN"
-        resp = _req.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        html = resp.text
-
-        # Bing 结果在 <li class="b_algo"> 内
-        blocks = re.findall(r'<li[^>]*class="[^\"]*b_algo[^\"]*"[^>]*>(.*?)</li>', html, re.S)
-        for block in blocks[:max_results]:
-            # 提取标题和链接
-            link_m = re.search(r'<a[^>]+href="([^"]*)"[^>]*>(.*?)</a>', block, re.S)
-            if not link_m:
-                continue
-            link = link_m.group(1)
-            title_clean = re.sub(r"<[^>]+>", "", link_m.group(2)).strip()
-            # 提取摘要
-            snippet_m = re.search(
-                r'<div class="b_caption"[^>]*>.*?<p>(.*?)</p>', block, re.S,
-            )
-            snippet = ""
-            if snippet_m:
-                snippet = re.sub(r"<[^>]+>", "", snippet_m.group(1)).strip()
-            # 备选摘要位置
-            if not snippet:
-                snippet_m = re.search(r'<p[^>]*>(.*?)</p>', block, re.S)
-                if snippet_m:
-                    snippet = re.sub(r"<[^>]+>", "", snippet_m.group(1)).strip()
-            d = _extract_date(title_clean + " " + snippet)
-            results.append({
-                "title": title_clean,
-                "snippet": snippet,
-                "url": link,
-                "date": d,
-            })
-    except Exception as e:
-        print(f"  [Bing 搜索失败: {e}]")
+        print(f"  [百度搜索失败: {e}]")
 
     return results
 
@@ -349,11 +291,12 @@ def _fetch_market_analysis() -> str:
         else:
             print(f"    - {ch['name']}: 获取失败")
 
-    # ── 第二阶段：分析师观点（Bing 搜索 + 域名过滤） ──
+    # ── 第二阶段：分析师观点（百度搜索 + 域名过滤） ──
+    import time as _time
     for ch in MARKET_ANALYST_CHANNELS:
         query = ch["query"]
         print(f"  搜索分析师: {ch['name']} — {query}")
-        results = _bing_search(query, max_results=5)
+        results = _baidu_search(query, max_results=5)
         # 域名过滤：优先财经网站
         filtered = [r for r in results if _is_finance_domain(r["url"])]
         # 兜底：无域名匹配时取前 2 条（任意域名）
@@ -375,6 +318,7 @@ def _fetch_market_analysis() -> str:
             print(f"    ✓ {ch['name']}: {fetched} 条")
         else:
             print(f"    - {ch['name']}: 无结果")
+        _time.sleep(1.5)  # 百度反爬间隔
 
     # ── 按日期降序排列（无日期排末尾） ──
     def _sort_key(item):
@@ -473,6 +417,19 @@ def demote_headings(content: str, levels: int = 3) -> str:
         return extra + m.group(0)
 
     return re.sub(r"^(#{1,6})\s", _replace, content, flags=re.MULTILINE)
+
+
+def _shrink_html_table_font(content: str) -> str:
+    """给 CZSC HTML 表格加 font-size，使其与 Kronos markdown 表格字体一致。
+
+    WeChat/Web markdown 渲染器对原生 markdown 表格应用紧凑字号，
+    但原始 HTML <table> 沿用浏览器大号默认字体，导致视觉不统一。
+    """
+    return re.sub(
+        r'(<table\s[^>]*style=")',
+        r'\1font-size:0.92em;',
+        content,
+    )
 
 
 def normalize_code(code: str) -> str:
@@ -777,7 +734,7 @@ def merge(date_str: str):
                 # CZSC 部分
                 if cs:
                     f.write(f"#### 📊 CZSC 缠论趋势分析\n")
-                    f.write(demote_headings(cs["content"].rstrip()))
+                    f.write(demote_headings(_shrink_html_table_font(cs["content"].rstrip())))
                     f.write("\n\n")
                 else:
                     f.write(f"#### 📊 CZSC 缠论趋势分析\n")

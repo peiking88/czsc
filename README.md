@@ -352,3 +352,22 @@ uv run ruff check czsc/ tests/
 - 清理: 删除 scripts/extract_signal_docs.py、.claude/settings.json
 
 ### 2026-06-30 18:42:26
+
+### 2026-07-01 15:35:08
+```
+ .claude/settings.json                                                                 |  19 ----
+ .claude/skills/check-czsc-env/SKILL.md                                                | 107 ----------------------
+ .claude/skills/czsc-release/SKILL.md                                                  | 319 ------------------------------------------------------------------
+ .claude/skills/czsc-release/references/release_checklist.md                           |  35 --------
+ .claude/skills/czsc-write-signal-function/SKILL.md                                    | 104 ----------------------
+ .claude/skills/czsc-write-signal-function/agents/openai.yaml                          |   4 -
+ .claude/skills/czsc-write-signal-function/references/event-driven-signal-pipeline.md  |  82 -----------------
+ .claude/skills/czsc-write-signal-function/references/signal-function-patterns.md      | 141 -----------------------------
+ .claude/skills/czsc-write-signal-function/scripts/new_signal_stub.py                  | 142 -----------------------------
+ .claude/skills/signal-functions/SKILL.md                                              | 117 ------------------------
+ .claude/skills/signal-functions/references/signals-ang.md                             |  17 ----
+ .claude/skills/signal-functions/references/signals-bar.md                             |  53 -----------
+ .claude/skills/signal-functions/references/signals-byi.md                             |  12 ---
+ .claude/skills/signal-functions/references/signals-cat.md                             |   9 --
+ .claude/skills/signal-functions/references/signals-clv.md                             |   8 --
+```

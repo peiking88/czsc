@@ -87,14 +87,30 @@ _FREQ_MAP: dict[str, Freq] = {
 
 
 def _strip_suffix(symbol: str) -> str:
-    """600519.SH → 600519"""
+    """600519.SH → 600519（stock_name 表 code 列为纯数字）"""
     return symbol.split(".")[0]
 
 
+def _td_code(symbol: str) -> str:
+    """600519.SH → sh600519（TDengine K线/复权表名前缀：小写市场码 + 6 位代码）"""
+    num, _, market = symbol.partition(".")
+    return f"{market.lower()}{num}"
+
+
+def _market_of(symbol: str) -> str:
+    """600519.SH → sh（stock_name.market 小写两位市场码；无后缀返回空串）"""
+    return symbol.partition(".")[2].lower()
+
+
 def _batch_stock_names(symbols: list[str]) -> dict[str, str]:
-    """从 TDengine stock_name 表批量获取股票名称"""
+    """从 TDengine stock_name 表批量获取股票名称
+
+    tdx-cpp v0.13.7 起 stock_name 含 market 列，两市同 code 分别记录
+    （000001: sh=上证指数 / sz=平安银行），按 (code, market) 精确匹配，
+    避免同 code 异市名字互相覆盖；无市场后缀的 code 回退到任意一行。
+    """
     name_map: dict[str, str] = {}
-    raw_codes = [_strip_suffix(s) for s in symbols]
+    raw_codes = list({_strip_suffix(s) for s in symbols})
 
     try:
         conn = connect()
@@ -105,15 +121,22 @@ def _batch_stock_names(symbols: list[str]) -> dict[str, str]:
     try:
         placeholders = ",".join(f"'{c}'" for c in raw_codes)
         r = conn.query(
-            f"select code, name from tdx.stock_name "
+            f"select code, name, market from tdx.stock_name "
             f"where code in ({placeholders})"
         )
-        db_map: dict[str, str] = {row[0]: row[1] for row in r}
+        precise: dict[tuple[str, str], str] = {}
+        by_code: dict[str, str] = {}
+        for row in r:
+            code, name, market = row[0], row[1], row[2]
+            precise[(code, market)] = name
+            by_code.setdefault(code, name)  # 无市场前缀时的回退
     finally:
         conn.close()
 
     for symbol in symbols:
-        name_map[symbol] = db_map.get(_strip_suffix(symbol), symbol)
+        raw = _strip_suffix(symbol)
+        name = precise.get((raw, _market_of(symbol))) or by_code.get(raw) or symbol
+        name_map[symbol] = name
     return name_map
 
 
@@ -229,7 +252,7 @@ def _get_raw_bars_tdengine(
     symbol: str, period: str, sdt: str, edt: str
 ) -> list:
     """从 TDengine 读取K线数据（后复权），自动处理采样与复权，返回 RawBar 列表"""
-    code = _strip_suffix(symbol)
+    code = _td_code(symbol)
 
     conn = connect()
     try:

@@ -365,8 +365,19 @@ def _strip_market_prefix(code: str) -> str:
     return m.group(1) if m else code
 
 
+def _market_of(code: str) -> str:
+    """提取市场码：sh600519 → sh；无市场前缀返回空串。与 _strip_market_prefix 同源正则。"""
+    m = re.match(r"^(sh|sz|bj|SH|SZ|BJ)\d{6}$", code)
+    return m.group(1).lower() if m else ""
+
+
 def _batch_stock_names(codes: list[str]) -> dict[str, str]:
-    """从 TDengine stock_name 表批量获取股票名称，返回 {normalized_code: name}。"""
+    """从 TDengine stock_name 表批量获取股票名称，返回 {normalized_code: name}。
+
+    tdx-cpp v0.13.7 起 stock_name 含 market 列，两市同 code 分别记录
+    （000001: sh=上证指数 / sz=平安银行），按 (code, market) 精确匹配，
+    避免同 code 异市名字互相覆盖；无市场前缀的 code 回退到任意一行。
+    """
     name_map: dict[str, str] = {}
     try:
         from taosws import connect
@@ -387,18 +398,22 @@ def _batch_stock_names(codes: list[str]) -> dict[str, str]:
         # 批量查询
         placeholders = ",".join(f"'{c}'" for c in raw_codes)
         r = conn.query(
-            f"select code, name from tdx.stock_name "
+            f"select code, name, market from tdx.stock_name "
             f"where code in ({placeholders})"
         )
-        db_map: dict[str, str] = {}
+        precise: dict[tuple[str, str], str] = {}
+        by_code: dict[str, str] = {}
         for row in r:
-            db_map[row[0]] = row[1]
+            code, name, market = row[0], row[1], row[2]
+            precise[(code, market)] = name
+            by_code.setdefault(code, name)  # 无市场前缀时的回退
 
         # 回填到原始 normalized_code
         for ncode in codes:
             raw = _strip_market_prefix(ncode)
-            if raw in db_map:
-                name_map[ncode] = db_map[raw]
+            name = precise.get((raw, _market_of(ncode))) or by_code.get(raw)
+            if name:
+                name_map[ncode] = name
     finally:
         conn.close()
 

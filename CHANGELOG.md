@@ -7,6 +7,20 @@
 
 ---
 
+## [1.8.5] — 2026-07-08
+
+### Changed
+
+- **适配 tdx-cpp v0.13.7 数据库 schema**：`scripts/predict.py` / `scripts/merge_kronos_czsc.py` 的 `_batch_stock_names` 改为按 `(code, market)` 精确匹配 `stock_name` 表（v0.13.7 起新增 `market` 列，两市同 code 分别记录），修复同 code 异市名字互相覆盖（`000001` 上证指数 / 平安银行）。K 线/复权表查询已通过 `_td_code` 命中带市场前缀的新子表名 `k_sh000001_5m` / `a_sh000001`。
+- **市场分析报告双章节**：`merge_kronos_czsc.py::_generate_market_analysis` 输出改为「各分析师观点」+「综合研判」两章节，观点标注来源与日期，全文上限 500 → 800 字。
+
+### Docs / Chore
+
+- 补全 `669715a7`（清理过时 skill 文件）的 changelog 条目。
+- `.gitignore` 忽略 `summary.md`（任务摘要临时文件）。
+
+> 注：`1.8.1`–`1.8.4` 为 scripts/配置维护版本（合并脚本修复、PyPI 镜像、skill 清理），未单独记录 changelog。
+
 ## [1.8.0] — 2026-06-29
 
 ### Changed

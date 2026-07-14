@@ -36,12 +36,15 @@ from .analysis import cross_sectional_ic
 from .data import (
     DataClient,
     DiskCache,
+    batch_stock_names,
     clear_cache,
     clear_expired_cache,
     disk_cache,
     empty_cache_path,
     get_dir_size,
     get_url_token,
+    get_raw_bars,
+    get_symbols,
     home_path,
     set_url_token,
 )
@@ -80,12 +83,15 @@ __all__ = [
     # data
     "DataClient",
     "DiskCache",
+    "batch_stock_names",
     "clear_cache",
     "clear_expired_cache",
     "disk_cache",
     "empty_cache_path",
     "get_dir_size",
     "get_url_token",
+    "get_raw_bars",
+    "get_symbols",
     "home_path",
     "set_url_token",
     # holds_concepts

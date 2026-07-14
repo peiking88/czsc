@@ -786,16 +786,7 @@ def merge(date_str: str):
 
 
 def main():
-    if len(sys.argv) > 1:
-        date_str = sys.argv[1]
-    else:
-        date_str = date.today().strftime("%Y%m%d")
-
-    # 校验日期格式
-    if not re.match(r"^\d{8}$", date_str):
-        print(f"错误: 日期格式不正确，需要 YYYYMMDD，实际: {date_str}")
-        sys.exit(1)
-
+    date_str = date.today().strftime("%Y%m%d")
     merge(date_str)
 
 

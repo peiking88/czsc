@@ -32,7 +32,6 @@ import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import redirect_stderr
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -40,7 +39,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 from czsc import CZSC, ZS
 from czsc._native import Direction
-from czsc.connectors.tdx_connector import _normalize_symbol, get_raw_bars, prefetch_factors
+from czsc import get_raw_bars
 
 DATA_LOOKBACK = {
     "30分钟": 540, "60分钟": 540, "5分钟": 365, "15分钟": 540,
@@ -58,8 +57,6 @@ def _setup_logging(log_file):
         loguru_logger.add(log_file, level="WARNING", encoding="utf-8")
     except ImportError:
         pass
-    for noisy in ("PYTDX2", "opentdx", "mootdx"):
-        logging.getLogger(noisy).setLevel(logging.CRITICAL)
     logger = logging.getLogger("fx_strong_backtest")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
@@ -83,22 +80,10 @@ def _parse_tdx_zxg(path):
     return symbols
 
 
-def _batch_stock_names(symbols, devnull):
-    from tdxdata.api import TdxData
-    name_map = {}
-    with redirect_stderr(devnull):
-        tdx = TdxData()
-        try:
-            for symbol in symbols:
-                code = _normalize_symbol(symbol)
-                try:
-                    name = tdx.get_stock_name(code)
-                    name_map[symbol] = name or code
-                except Exception:
-                    name_map[symbol] = code
-        finally:
-            tdx.close()
-    return name_map
+def _batch_stock_names(symbols, devnull=None):
+    """批量获取股票名称（TDengine stock_name 表）"""
+    from czsc import batch_stock_names
+    return batch_stock_names(symbols)
 
 
 def _is_index(symbol):
@@ -409,7 +394,7 @@ def analyze_period(symbol, freq, sdt, edt, logger=None):
         "stats": dict,
       }
     """
-    bars = get_raw_bars(symbol, freq, sdt, edt, fq="前复权", raw_bar=True)
+    bars = get_raw_bars(symbol, freq, sdt, edt, fq="前复权")
     if not bars or len(bars) < 30:
         return {"data_available": False}
 
@@ -925,11 +910,7 @@ def main():
     print("=" * 60)
 
     print("获取股票名称...")
-    devnull = open(os.devnull, "w")
-    name_map = _batch_stock_names(symbols, devnull)
-
-    print(f"预取复权因子 ({len(symbols)}只)...")
-    prefetch_factors(symbols, dividend_type="前复权", max_workers=min(args.workers, len(symbols)))
+    name_map = _batch_stock_names(symbols)
 
     all_results = {}
     total = len(symbols)

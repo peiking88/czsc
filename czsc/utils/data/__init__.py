@@ -43,6 +43,9 @@ from .validators import (
     validate_weight_data,
 )
 
+# 从 tdengine 导入 TDengine 直读工具（替代已移除的 tdx_connector）
+from .tdengine import batch_stock_names, get_raw_bars, get_symbols
+
 __all__ = [
     # Cache
     "home_path",
@@ -71,4 +74,8 @@ __all__ = [
     "convert_dict_to_dataframe",
     "ensure_datetime_column",
     "flatten_multiindex_columns",
+    # TDengine
+    "get_raw_bars",
+    "get_symbols",
+    "batch_stock_names",
 ]

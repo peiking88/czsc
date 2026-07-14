@@ -104,6 +104,7 @@ from .traders import (
 from .utils import (
     DataClient,
     DiskCache,
+    batch_stock_names,
     clear_cache,
     clear_expired_cache,
     code_namespace,
@@ -115,6 +116,8 @@ from .utils import (
     freqs_sorted,
     get_dir_size,
     get_py_namespace,
+    get_raw_bars,
+    get_symbols,
     get_url_token,
     home_path,
     import_by_name,
@@ -215,6 +218,7 @@ __all__ = [
     # 通用工具
     "DataClient",
     "DiskCache",
+    "batch_stock_names",
     "clear_cache",
     "clear_expired_cache",
     "code_namespace",
@@ -226,6 +230,8 @@ __all__ = [
     "freqs_sorted",
     "get_dir_size",
     "get_py_namespace",
+    "get_raw_bars",
+    "get_symbols",
     "get_url_token",
     "home_path",
     "import_by_name",

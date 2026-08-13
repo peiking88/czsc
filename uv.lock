@@ -307,18 +307,6 @@ wheels = [
 ]
 
 [[package]]
-name = "click"
-version = "8.4.2"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
-]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -444,10 +432,8 @@ source = { editable = "." }
 dependencies = [
     { name = "dill" },
     { name = "loguru" },
-    { name = "mootdx" },
     { name = "numpy" },
     { name = "openpyxl" },
-    { name = "opentdx" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "polars" },
@@ -458,7 +444,6 @@ dependencies = [
     { name = "statsmodels" },
     { name = "ta-lib" },
     { name = "taos-ws-py" },
-    { name = "tdxdata" },
     { name = "tenacity" },
     { name = "tqdm" },
     { name = "typer" },
@@ -509,10 +494,8 @@ requires-dist = [
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "jupyter", marker = "extra == 'dev'" },
     { name = "loguru" },
-    { name = "mootdx", editable = "/home/li/peiking88/mootdx" },
     { name = "numpy" },
     { name = "openpyxl" },
-    { name = "opentdx", editable = "/home/li/peiking88/opentdx" },
     { name = "pandas", specifier = ">=1.0.0" },
     { name = "plotly" },
     { name = "polars", specifier = ">=0.20.0" },
@@ -526,7 +509,6 @@ requires-dist = [
     { name = "ta-lib" },
     { name = "talib-rs", marker = "(python_full_version == '3.12.*' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'test') or (python_full_version == '3.12.*' and sys_platform == 'win32' and extra == 'test')" },
     { name = "taos-ws-py", specifier = ">=0.6.9" },
-    { name = "tdxdata", editable = "/home/li/peiking88/tdxdata" },
     { name = "tenacity" },
     { name = "tqdm", specifier = ">=4.66.4" },
     { name = "twine", marker = "extra == 'release'" },
@@ -1324,54 +1306,12 @@ wheels = [
 ]
 
 [[package]]
-name = "mini-racer"
-version = "0.12.4"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8c/2d/e051f58e17117b1b8b11a7d17622c1528fa9002c553943c6b677c1b412da/mini_racer-0.12.4.tar.gz", hash = "sha256:84c67553ce9f3736d4c617d8a3f882949d37a46cfb47fe11dab33dd6704e62a4", size = 447529, upload-time = "2024-06-20T14:44:39.992Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/71/fe/1452b6c74cae9e8cd7b6a16d8b1ef08bba4dd0ed373a95f3b401c2e712ea/mini_racer-0.12.4-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:bce8a3cee946575a352f5e65335903bc148da42c036d0c738ac67e931600e455", size = 15701219, upload-time = "2024-06-20T14:44:21.96Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/99/ae/c22478eff26e6136341e6b40d34f8d285f910ca4d2e2a0ca4703ef87be79/mini_racer-0.12.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:56c832e6ac2db6a304d1e8e80030615297aafbc6940f64f3479af4ba16abccd5", size = 14566436, upload-time = "2024-06-20T14:44:24.496Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/44/89/f062aa116b14fcace91f0af86a37605f0ba7c07a01c8101b5ea104d489b1/mini_racer-0.12.4-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:b82c4bd2976e280ed0a72c9c2de01b13f18ccfbe6f4892cbc22aae04410fac3c", size = 14931664, upload-time = "2024-06-20T14:44:27.385Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9c/a1/09122c88a0dd0a2141b0ea068d70f5d31acd0015d6f3157b8efd3ff7e026/mini_racer-0.12.4-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:69a1c44d02a9069b881684cef15a2d747fe0743df29eadc881fda7002aae5fd2", size = 14955238, upload-time = "2024-06-20T14:44:30.217Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6c/3b/826e41f92631560e5c6ca2aa4ef9005bdccf9290c1e7ddebe05e0a3b8c7c/mini_racer-0.12.4-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:499dbc267dfe60e954bc1b6c3787f7b10fc41fe1975853c9a6ddb55eb83dc4d9", size = 15211136, upload-time = "2024-06-20T14:44:33.509Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e5/37/15b30316630d1f63b025f058dc92efa75931a37315c34ca07f80be2cc405/mini_racer-0.12.4-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:231f949f5787d18351939f1fe59e5a6fe134bccb5ecf8f836b9beab69d91c8d9", size = 15128684, upload-time = "2024-06-20T14:44:35.644Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/5c/0e/a9943f90b4a8a6d3849b81a00a00d2db128d876365385af382a0e2caf191/mini_racer-0.12.4-py3-none-win_amd64.whl", hash = "sha256:9446e3bd6a4eb9fbedf1861326f7476080995a31c9b69308acef17e5b7ecaa1b", size = 13674040, upload-time = "2024-06-20T14:44:37.851Z" },
-]
-
-[[package]]
 name = "mistune"
 version = "3.1.4"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d7/02/a7fb8b21d4d55ac93cdcde9d3638da5dd0ebdd3a4fed76c7725e10b81cbe/mistune-3.1.4.tar.gz", hash = "sha256:b5a7f801d389f724ec702840c11d8fc48f2b33519102fc7ee739e8177b672164", size = 94588, upload-time = "2025-08-29T07:20:43.594Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7a/f0/8282d9641415e9e33df173516226b404d367a0fc55e1a60424a152913abc/mistune-3.1.4-py3-none-any.whl", hash = "sha256:93691da911e5d9d2e23bc54472892aff676df27a75274962ff9edc210364266d", size = 53481, upload-time = "2025-08-29T07:20:42.218Z" },
-]
-
-[[package]]
-name = "mootdx"
-version = "2.0.5"
-source = { editable = "/home/li/peiking88/mootdx" }
-dependencies = [
-    { name = "click" },
-    { name = "httpx" },
-    { name = "mini-racer" },
-    { name = "opentdx" },
-    { name = "prettytable" },
-    { name = "tenacity" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.1.3,<9.0.0" },
-    { name = "httpx", specifier = ">=0.25.0,<0.26.0" },
-    { name = "mini-racer", specifier = ">=0.12.0,<0.13.0" },
-    { name = "opentdx", specifier = ">=0.5.0" },
-    { name = "prettytable", specifier = ">=3.5.0,<4.0.0" },
-    { name = "tenacity", specifier = ">=8.1.0,<9.0.0" },
-    { name = "tqdm" },
-    { name = "typing-extensions", specifier = ">=4.5.0,<5.0.0" },
 ]
 
 [[package]]
@@ -1609,23 +1549,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opentdx"
-version = "0.5.13"
-source = { editable = "/home/li/peiking88/opentdx" }
-dependencies = [
-    { name = "click" },
-    { name = "numpy" },
-    { name = "pandas" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click" },
-    { name = "numpy" },
-    { name = "pandas" },
-]
-
-[[package]]
 name = "packaging"
 version = "25.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -1767,18 +1690,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8e/f3/b2a5e720cc56eaa38b4518e63aa577b4bbd60e8b05a00fe43ca051be5879/polars_runtime_32-1.38.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:61e8d73c614b46a00d2f853625a7569a2e4a0999333e876354ac81d1bf1bb5e2", size = 45336615, upload-time = "2026-02-06T18:12:14.074Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f1/8d/ee2e4b7de948090cfb3df37d401c521233daf97bfc54ddec5d61d1d31618/polars_runtime_32-1.38.1-cp310-abi3-win_amd64.whl", hash = "sha256:08c2b3b93509c1141ac97891294ff5c5b0c548a373f583eaaea873a4bf506437", size = 45680732, upload-time = "2026-02-06T18:12:19.097Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/bf/18/72c216f4ab0c82b907009668f79183ae029116ff0dd245d56ef58aac48e7/polars_runtime_32-1.38.1-cp310-abi3-win_arm64.whl", hash = "sha256:6d07d0cc832bfe4fb54b6e04218c2c27afcfa6b9498f9f6bbf262a00d58cc7c4", size = 41639413, upload-time = "2026-02-06T18:12:22.044Z" },
-]
-
-[[package]]
-name = "prettytable"
-version = "3.18.0"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/81/74/ba08d81e668ccfe8658d7520a307e63c19862c08eb4ccb26f356c5239a7a/prettytable-3.18.0.tar.gz", hash = "sha256:439217116152244369caf3d9f1caf2f9fe29b03bd79e88d2928c8e718c95d680", size = 76373, upload-time = "2026-06-22T16:07:50.174Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fe/be/2e6798ace5cc036f5d05d36b7b2fd85346f1a708c87060890b070d0ec607/prettytable-3.18.0-py3-none-any.whl", hash = "sha256:b3346e0e6f79180833aebaac088ae926340586cf6d7d991b9eb125b65f72313a", size = 37357, upload-time = "2026-06-22T16:07:48.595Z" },
 ]
 
 [[package]]
@@ -2560,26 +2471,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/4e/db/6212a878abc76bf8ecbda85d9030fa7fae0a16e7774c4692c8bb01dd3b1d/taos_ws_py-0.6.9-cp37-abi3-manylinux_2_31_riscv64.whl", hash = "sha256:68e85c16833691094555bc5dfea31743e11e3210a385767a3f11237c97b5fe63", size = 4246816, upload-time = "2026-04-23T10:00:24.48Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6a/f6/3a5ee3384636ca7ad303d774c725781073fcfd43728efa95299662907cf2/taos_ws_py-0.6.9-cp37-abi3-win_amd64.whl", hash = "sha256:8e020f7d8ba3b8c4c623d5189f63f9223b7a54f10fb8cba756defaec842e52b7", size = 4781832, upload-time = "2026-04-23T10:00:26.2Z" },
 ]
-
-[[package]]
-name = "tdxdata"
-version = "1.0.1"
-source = { editable = "/home/li/peiking88/tdxdata" }
-dependencies = [
-    { name = "mootdx" },
-    { name = "numpy" },
-    { name = "pandas" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mootdx", specifier = ">=2.0.3" },
-    { name = "numpy", specifier = ">=1.24" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "tenacity"

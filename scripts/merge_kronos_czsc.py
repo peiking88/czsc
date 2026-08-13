@@ -36,10 +36,6 @@ MARKET_ANALYST_CHANNELS = [
     {"name": "中信证券", "query": "中信证券 A股 投资策略 近一周"},
     {"name": "广发宏观", "query": "广发宏观 A股 最新观点 近一周"},
     {"name": "唐海清",   "query": "唐海清 天风证券 A股 最新观点 近两周"},
-    {"name": "李一恩",   "query": "李一恩 A股 最新观点 近两周"},
-    {"name": "徐小明",   "query": "徐小明 A股 最新观点 近两周"},
-    {"name": "边风炜",   "query": "边风炜 A股 最新观点 近一周"},
-    {"name": "刘建平",   "query": "刘建平 新兰德 A股 最新观点 近一周"},
 ]
 
 # ── 财经博主盘面分析（头条号） ──
@@ -49,6 +45,8 @@ MARKET_BLOGGER_CHANNELS = [
     {"name": "时间轨迹",     "url": "https://www.toutiao.com/c/user/token/MS4wLjABAAAAtLAFP3b8ZrE7gWwJ-2VEBWh0u6ClSyaXb0v93xv-eW0/"},
     {"name": "数据方向",     "url": "https://www.toutiao.com/c/user/token/CicxNMgTotM81WeMJw2M_ltdwxo3jNCOCoeKjJoCDQBnw5Hxp32mE_kaSQo8AAAAAAAAAAAAAFDF9B1VAQjYgD-NiggqAPaOTQDtJEow3BGvtWhBtYzgEdpjnPXafo0QkPRC6bv1DlI3ELyxmQ4Yw8WD6gQiAQMbN1XI/"},
     {"name": "股市刀锋",     "url": "https://www.toutiao.com/c/user/token/MS4wLjABAAAAa4wugAtuUC1SH1uxg-bGNFeAv-G8dk2yPlmnOU8pyBY/"},
+    {"name": "徐小明",       "url": "https://www.toutiao.com/c/user/token/CiaOWGxskg8RM0eomSu4fKY0Wr-O1jwkuRENkHJhdXOGPiRcwKGHWhpJCjwAAAAAAAAAAAAAUMa-s4jXx2zbV3949v7bmKrIM0WQpV2mbQK-j230O4NTeUTcDHJN2devOFF-uMQbYZgQmrWZDhjDxYPqBCIBA0F54TE=?/"},
+    {"name": "边风炜",       "url": "https://www.toutiao.com/c/user/token/CidknHfCUMgcTGfgy6WOaA8bEaoT9FXszGtw54HPEugG1kJ7U6AGChgaSQo8AAAAAAAAAAAAAFDGvrOI18ds21d_ePb-25iqyDNFkKVdpm0Cvo9t9DuDU3lE3AxyTdnXrzhRfrjEG2GYEIS3mQ4Yw8WD6gQiAQPfno9X/?"},
 ]
 
 # 搜索结果域名白名单（优先匹配的取前 2 条，兜底取任意域名前 2 条）
@@ -316,18 +314,30 @@ def _fetch_blogger_posts(ch: dict, max_posts: int = 3) -> list[dict]:
         )
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # 等待文章卡片渲染
-            try:
-                page.wait_for_selector(".feed-card-wtt-wrapper", timeout=10000)
-            except Exception:
+            # 等待文章卡片渲染（两种主页结构）
+            cards = []
+            for selector in (".feed-card-wtt-wrapper", ".feed-card-wrapper.feed-card-article-wrapper"):
+                try:
+                    page.wait_for_selector(selector, timeout=8000)
+                    cards = page.query_selector_all(selector)
+                    if cards:
+                        break
+                except Exception:
+                    continue
+            if not cards:
                 print(f"    - {name}: 文章卡片未出现")
                 return posts
             page.wait_for_timeout(1500)  # 额外等待懒加载
 
-            cards = page.query_selector_all(".feed-card-wtt-wrapper")
             for card in cards[:max_posts]:
-                time_el = card.query_selector(".time")
+                # 微头条结构：p.content + .time
                 content_el = card.query_selector("p.content")
+                time_el = card.query_selector(".time")
+                # 文章结构：a.title + .feed-card-footer-time-cmp
+                if not content_el:
+                    content_el = card.query_selector("a.title")
+                if not time_el:
+                    time_el = card.query_selector(".feed-card-footer-time-cmp")
 
                 time_text = time_el.inner_text().strip() if time_el else ""
                 content_text = content_el.inner_text().strip() if content_el else ""

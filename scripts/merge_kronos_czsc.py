@@ -31,11 +31,24 @@ MARKET_NEWS_CHANNELS: list = []
 MARKET_ANALYST_CHANNELS = [
     {"name": "洪灏",     "query": "洪灏 A股 最新研判 近一周"},
     {"name": "陈果",     "query": "陈果 A股 最新观点 近一周"},
-    {"name": "李迅雷",   "query": "李迅雷 A股 最新观点 近一周"},
     {"name": "高盛",     "query": "高盛 A股 最新观点 近一周"},
     {"name": "大摩",     "query": "摩根士丹利 A股 最新策略 近一周"},
     {"name": "中信证券", "query": "中信证券 A股 投资策略 近一周"},
-    {"name": "郭磊",     "query": "郭磊 A股 最新观点 近一周"},
+    {"name": "广发宏观", "query": "广发宏观 A股 最新观点 近一周"},
+    {"name": "唐海清",   "query": "唐海清 天风证券 A股 最新观点 近两周"},
+    {"name": "李一恩",   "query": "李一恩 A股 最新观点 近两周"},
+    {"name": "徐小明",   "query": "徐小明 A股 最新观点 近两周"},
+    {"name": "边风炜",   "query": "边风炜 A股 最新观点 近一周"},
+    {"name": "刘建平",   "query": "刘建平 新兰德 A股 最新观点 近一周"},
+]
+
+# ── 财经博主盘面分析（头条号） ──
+# 通过头条号主页抓取博主最新盘面分析文章。
+MARKET_BLOGGER_CHANNELS = [
+    {"name": "衡山佛曰论股", "url": "https://www.toutiao.com/c/user/token/MS4wLjABAAAAI86oR8kKzMvj-6geoYfW2ovdpuUUZzDDaxScGnivmtA/"},
+    {"name": "时间轨迹",     "url": "https://www.toutiao.com/c/user/token/MS4wLjABAAAAtLAFP3b8ZrE7gWwJ-2VEBWh0u6ClSyaXb0v93xv-eW0/"},
+    {"name": "数据方向",     "url": "https://www.toutiao.com/c/user/token/CicxNMgTotM81WeMJw2M_ltdwxo3jNCOCoeKjJoCDQBnw5Hxp32mE_kaSQo8AAAAAAAAAAAAAFDF9B1VAQjYgD-NiggqAPaOTQDtJEow3BGvtWhBtYzgEdpjnPXafo0QkPRC6bv1DlI3ELyxmQ4Yw8WD6gQiAQMbN1XI/"},
+    {"name": "股市刀锋",     "url": "https://www.toutiao.com/c/user/token/MS4wLjABAAAAa4wugAtuUC1SH1uxg-bGNFeAv-G8dk2yPlmnOU8pyBY/"},
 ]
 
 # 搜索结果域名白名单（优先匹配的取前 2 条，兜底取任意域名前 2 条）
@@ -222,10 +235,11 @@ def _generate_market_analysis(news_contents: list[str]) -> str:
 
     prompt = (
         f"你是一位专业的A股市场分析师。今天是 {today}。\n"
-        "请根据以下市场资讯（已按日期从新到旧排列），生成一份简洁的今日盘面分析报告。\n\n"
+        "请根据以下市场资讯（已按日期从新到旧排列），生成一份简洁的今日盘面分析报告。\n"
+        "资讯来源包括：专业分析师观点、财经博主（头条号）盘面分析。\n\n"
         "**输出要求：**\n"
         "1. 输出两个章节：「各分析师观点」和「综合研判与操作建议」\n"
-        "2. 「各分析师观点」章节：按分析师逐一列出其核心观点，**必须标注分析师姓名和日期**，每人一段，格式为「**姓名**（日期）：观点摘要」\n"
+        "2. 「各分析师观点」章节：按分析师/博主逐一列出其核心观点，**必须标注姓名和日期**，每人一段，格式为「**姓名**（日期）：观点摘要」\n"
         "3. 「综合研判与操作建议」章节：基于以上各分析师观点进行综合研判，涵盖：大盘走势判断、板块轮动方向、风险提示\n"
         "4. 操作建议可结合缠论视角（中枢、买卖点、背驰等）给出具体策略\n"
         "5. 使用 Markdown 格式，语言简洁，重点突出，全文控制在 800 字以内\n\n"
@@ -255,6 +269,108 @@ def _generate_market_analysis(news_contents: list[str]) -> str:
         return "\n".join(texts) if texts else ""
     except Exception as e:
         return f"⚠️ 盘面分析生成失败: {e}"
+
+
+_playwright_browser = None
+
+
+def _get_playwright_browser():
+    """懒加载 Playwright chromium 实例，跨博主复用。"""
+    global _playwright_browser
+    if _playwright_browser is None:
+        from playwright.sync_api import sync_playwright
+        _playwright_browser = sync_playwright().start().chromium.launch(headless=True)
+    return _playwright_browser
+
+
+def _close_playwright_browser():
+    """关闭 Playwright 浏览器实例（进程退出时清理）。"""
+    global _playwright_browser
+    if _playwright_browser is not None:
+        try:
+            _playwright_browser.close()
+        except Exception:
+            pass
+        _playwright_browser = None
+
+
+def _fetch_blogger_posts(ch: dict, max_posts: int = 3) -> list[dict]:
+    """用 Playwright 抓取头条号博主主页，提取最新文章标题和正文预览。
+
+    头条主页为 JS 渲染，Playwright 加载后从 ``.feed-card-wtt-wrapper`` 卡片
+    提取时间（``.time``）和正文预览（``p.content``），每博主最多取 ``max_posts`` 篇。
+    """
+    name = ch["name"]
+    url = ch["url"]
+    print(f"  获取博主: {name} — {url}")
+
+    posts: list[dict] = []
+    try:
+        browser = _get_playwright_browser()
+        page = browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # 等待文章卡片渲染
+            try:
+                page.wait_for_selector(".feed-card-wtt-wrapper", timeout=10000)
+            except Exception:
+                print(f"    - {name}: 文章卡片未出现")
+                return posts
+            page.wait_for_timeout(1500)  # 额外等待懒加载
+
+            cards = page.query_selector_all(".feed-card-wtt-wrapper")
+            for card in cards[:max_posts]:
+                time_el = card.query_selector(".time")
+                content_el = card.query_selector("p.content")
+
+                time_text = time_el.inner_text().strip() if time_el else ""
+                content_text = content_el.inner_text().strip() if content_el else ""
+
+                if not content_text:
+                    continue
+
+                # 解析 "N小时前" / "N分钟前" 为日期
+                d = _parse_relative_time(time_text) or _extract_date(content_text[:200])
+
+                posts.append({
+                    "source": f"博主-{name}",
+                    "date": d,
+                    "title": content_text.split("\n", 1)[0][:60],
+                    "text": content_text,
+                })
+        finally:
+            page.close()
+    except Exception as e:
+        print(f"    - {name}: 获取失败 {e}")
+
+    return posts
+
+
+def _parse_relative_time(text: str) -> str:
+    """将 'N小时前' / 'N分钟前' / '昨天' 等相对日期转为 'YYYY-MM-DD'。"""
+    from datetime import timedelta
+    import time as _time
+
+    text = text.strip()
+    now = date.today()
+
+    if "分钟前" in text or "小时前" in text or text == "刚刚":
+        return now.strftime("%Y-%m-%d")
+    if "昨天" in text:
+        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if "前天" in text:
+        return (now - timedelta(days=2)).strftime("%Y-%m-%d")
+    # "M月D日" 格式
+    m = re.search(r"(\d{1,2})月(\d{1,2})日", text)
+    if m:
+        return f"{now.year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    return ""
 
 
 # ── 盘面分析缓存（zxg/etf 共用，避免重复抓取） ──
@@ -318,6 +434,19 @@ def _fetch_market_analysis() -> str:
         else:
             print(f"    - {ch['name']}: 无结果")
         _time.sleep(1.5)  # 百度反爬间隔
+
+    # ── 第三阶段：财经博主盘面分析（头条号） ──
+    try:
+        for ch in MARKET_BLOGGER_CHANNELS:
+            posts = _fetch_blogger_posts(ch)
+            contents.extend(posts)
+            if posts:
+                print(f"    ✓ 博主-{ch['name']}: {len(posts)} 条")
+            else:
+                print(f"    - 博主-{ch['name']}: 无结果")
+            _time.sleep(1.0)
+    finally:
+        _close_playwright_browser()
 
     # ── 按日期降序排列（无日期排末尾） ──
     def _sort_key(item):

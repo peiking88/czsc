@@ -103,7 +103,7 @@ release = [
     "build",
 ]
 
-# 脚本依赖（merge_kronos_czsc.py 抓取头条博主主页）
+# 脚本依赖（market_analysis.py 抓取头条博主主页）
 scripts = [
     "playwright",
 ]

@@ -103,14 +103,9 @@ release = [
     "build",
 ]
 
-# 脚本依赖（market_analysis.py 抓取头条博主主页）
-scripts = [
-    "playwright",
-]
-
 # 完整开发环境（包含测试和开发工具）
 all = [
-    "czsc[test,dev,release,scripts]",
+    "czsc[test,dev,release]",
 ]
 
 [project.urls]

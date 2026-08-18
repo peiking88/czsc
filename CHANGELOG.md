@@ -7,6 +7,14 @@
 
 ---
 
+## [1.8.8] — 2026-08-18
+
+### Removed
+
+- **删除 `scripts/market_analysis.py` 盘面分析脚本**：移除头条博主/分析师观点抓取与 LLM 盘面分析功能，同时移除 `pyproject.toml` 中仅服务该脚本的 `scripts`（playwright）依赖 extra，`czsc[all]` 相应精简为 `[test,dev,release]`。
+
+---
+
 ## [1.8.5] — 2026-07-08
 
 ### Changed
